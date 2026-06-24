@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dota 2 Stats</title>
+  <style>
+    :root {
+      --bg: #0c1014;
+      --bg-grad: #141a22;
+      --panel: #161c25;
+      --panel-2: #1d2530;
+      --panel-3: #232d3a;
+      --line: #2b3644;
+      --text: #e4ebf3;
+      --muted: #8493a6;
+      --red: #d63d2e;
+      --red-soft: #e85c4a;
+      --gold: #c9a24b;
+      --green: #46b95f;
+      --radiant: #4fae5a;
+      --dire: #d6533f;
+    }
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; }
+    body {
+      margin: 0;
+      font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+      background:
+        linear-gradient(180deg, var(--bg-grad) 0%, var(--bg) 420px) fixed,
+        var(--bg);
+      color: var(--text);
+      padding: 22px clamp(18px, 4vw, 52px) 60px;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3 { font-weight: 600; letter-spacing: .2px; margin: 0; }
+    .muted { color: var(--muted); }
+    .err { color: var(--red-soft); font-size: 13px; }
+
+    /* ---- top bar ---- */
+    .topbar { display: flex; align-items: center; justify-content: space-between;
+              margin-bottom: 20px; gap: 16px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 13px; }
+    .brand img { width: 38px; height: 38px; display: block;
+                 filter: drop-shadow(0 2px 6px rgba(214,61,46,.45)); }
+    .brand h1 { font-size: 21px; }
+    .brand .sub { color: var(--muted); font-size: 12px; margin-top: 1px; }
+    .controls { display: flex; align-items: center; gap: 14px; }
+    button {
+      background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--line); padding: 9px 15px; border-radius: 8px;
+      cursor: pointer; font-size: 13px; transition: border-color .12s, background .12s;
+    }
+    button:hover { border-color: var(--red); background: var(--panel-3); }
+    .search { background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+              padding: 9px 13px; border-radius: 8px; font-size: 13px; width: 190px;
+              transition: border-color .12s, box-shadow .12s; }
+    .search::placeholder { color: var(--muted); }
+    .search:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 2px rgba(214,61,46,.18); }
+    .search.miss { border-color: var(--red); box-shadow: 0 0 0 2px rgba(214,61,46,.30); }
+
+    .switch { display: flex; align-items: center; gap: 9px; cursor: pointer;
+              font-size: 13px; color: var(--muted); user-select: none; }
+    .switch input { display: none; }
+    .track { width: 38px; height: 21px; border-radius: 999px; background: var(--panel-2);
+             border: 1px solid var(--line); position: relative; transition: background .15s; }
+    .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+                    border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
+    .switch input:checked + .track { background: var(--red); border-color: var(--red-soft); }
+    .switch input:checked + .track::after { transform: translateX(17px); background: #fff; }
+    .switch.on { color: var(--text); }
+
+    /* ---- profile ---- */
+    .profile { display: flex; align-items: center; gap: 18px; position: relative;
+               background: linear-gradient(120deg, var(--panel-2), var(--panel));
+               border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px;
+               margin-bottom: 18px; overflow: hidden; }
+    .profile::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px;
+                       background: linear-gradient(var(--red), var(--gold)); }
+    .avatar { width: 70px; height: 70px; border-radius: 12px; object-fit: cover;
+              background: var(--panel-3); border: 1px solid var(--line); }
+    .pname { font-size: 23px; font-weight: 700; }
+    .psub { color: var(--muted); margin-top: 5px; font-size: 14px; display: flex; gap: 10px; align-items: center; }
+    .badge { padding: 3px 11px; border-radius: 999px; background: var(--panel-3);
+             border: 1px solid var(--line); font-size: 12px; color: var(--gold); font-weight: 600; }
+
+    /* ---- layout ---- */
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .col { display: flex; flex-direction: column; gap: 16px; }
+    .col .grow-card { flex: 1; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+            padding: 16px 18px; }
+    .card > h2 { font-size: 12px; color: var(--muted); text-transform: uppercase;
+                 letter-spacing: 1.2px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+    .card > h2::before { content: ""; width: 8px; height: 8px; border-radius: 2px;
+                         background: var(--red); transform: rotate(45deg); }
+    .card-head { display: flex; align-items: center; justify-content: space-between;
+                 gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+    .card-head h2 { margin-bottom: 0; }
+    .card-head .search { width: 220px; }
+    .search-wrap { position: relative; }
+    .suggest { position: absolute; top: calc(100% + 4px); right: 0; width: 240px; display: none;
+               background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+               box-shadow: 0 12px 30px rgba(0,0,0,.5); overflow-y: auto; max-height: 320px; z-index: 20; }
+    .suggest.open { display: block; }
+    .suggest .opt { display: flex; align-items: center; gap: 9px; padding: 7px 10px;
+                    cursor: pointer; font-size: 13px; }
+    .suggest .opt.active, .suggest .opt:hover { background: var(--panel-3); }
+    .suggest .opt .hicon { width: 22px; height: 22px; }
+    .filter-clear { margin-left: 8px; cursor: pointer; color: var(--red-soft); font-weight: 700; }
+
+    /* ---- winrate donut ---- */
+    .wr-wrap { display: flex; align-items: center; gap: 22px; }
+    .donut { flex: 0 0 auto; }
+    .donut .val { font-size: 22px; font-weight: 750; fill: var(--text); }
+    .donut .cap { font-size: 9px; fill: var(--muted); letter-spacing: 1px; }
+    .wr-stats { display: grid; grid-template-columns: repeat(3, auto); gap: 10px 22px; }
+    .wr-stats .num { font-size: 22px; font-weight: 700; }
+    .wr-stats .lbl { color: var(--muted); font-size: 11px; }
+
+    /* ---- averages ---- */
+    .avgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 8px; }
+    @media (max-width: 520px) { .avgs { grid-template-columns: repeat(3, 1fr); } }
+    .avg { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; }
+    .avg .num { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .avg .lbl { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; margin-top: 2px; }
+
+    /* ---- heroes ---- */
+    .hicon { width: 30px; height: 30px; border-radius: 7px; object-fit: cover;
+             background: var(--panel-3); flex: 0 0 auto; }
+    .hero { display: grid; grid-template-columns: 20px 30px 1fr auto; align-items: center; gap: 11px;
+            padding: 8px 6px; border-radius: 9px; font-size: 14px; cursor: pointer; transition: background .1s; }
+    .hero:hover { background: var(--panel-2); }
+    .hero .rank { color: var(--muted); font-size: 12px; text-align: center; }
+    .hero .meter { height: 5px; background: var(--panel-3); border-radius: 999px; margin-top: 5px; overflow: hidden; }
+    .hero .meter > span { display: block; height: 100%; background: linear-gradient(90deg, var(--red), var(--gold)); }
+    .hero .pct { font-variant-numeric: tabular-nums; color: var(--gold); font-size: 13px; font-weight: 600; }
+    .chev { color: var(--muted); font-size: 12px; }
+
+    /* ---- breakdown bars ---- */
+    .bk-group + .bk-group { margin-top: 16px; }
+    .bk-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .bar { display: grid; grid-template-columns: 86px 1fr 92px; align-items: center; gap: 10px;
+           font-size: 13px; padding: 4px 0; }
+    .bar .track2 { height: 16px; background: var(--panel-2); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+    .bar .fill { height: 100%; background: linear-gradient(90deg, var(--red), var(--red-soft)); }
+    .bar .meta { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+
+    /* ---- tables ---- */
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px;
+         text-transform: uppercase; letter-spacing: .6px; padding: 6px 8px; }
+    td { padding: 8px; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    tbody tr { cursor: pointer; transition: background .1s; }
+    tbody tr:hover { background: var(--panel-2); }
+    .res { font-weight: 700; }
+    .res.w { color: var(--green); }
+    .res.l { color: var(--red-soft); }
+    .hcell { display: flex; align-items: center; gap: 9px; }
+    .hcell .hicon { width: 24px; height: 24px; }
+    .turbo-tag { display: inline-block; margin-left: 2px; padding: 1px 6px; border-radius: 999px;
+                 font-size: 9.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+                 background: rgba(214,61,46,.16); color: var(--red-soft); border: 1px solid rgba(214,61,46,.4); }
+
+    .footer { margin-top: 22px; color: var(--muted); font-size: 12px; text-align: center; }
+
+    /* ---- modal ---- */
+    #overlay { position: fixed; inset: 0; background: rgba(6,9,12,.72);
+               display: none; align-items: flex-start; justify-content: center;
+               padding: 40px 18px; overflow-y: auto; z-index: 50; }
+    #overlay.open { display: flex; }
+    .modal { width: min(900px, 100%); background: var(--panel); border: 1px solid var(--line);
+             border-radius: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
+    .mhead { display: flex; align-items: center; gap: 14px; padding: 18px 20px;
+             border-bottom: 1px solid var(--line); }
+    .mhead .big { width: 56px; height: 56px; border-radius: 12px; object-fit: cover; background: var(--panel-3); }
+    .mhead h3 { font-size: 20px; }
+    .mhead .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+    .mhead .spacer { flex: 1; }
+    .iconbtn { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+               width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 15px; }
+    .iconbtn:hover { color: var(--text); border-color: var(--red); }
+    .mbody { padding: 18px 20px; }
+    .loading { padding: 40px; text-align: center; color: var(--muted); }
+
+    .teamtitle { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+                 margin: 14px 0 6px; }
+    .teamtitle.radiant { color: var(--radiant); }
+    .teamtitle.dire { color: var(--dire); }
+    tr.me { background: rgba(201,162,75,.10); }
+    tr.me:hover { background: rgba(201,162,75,.16); }
+
+    .advnote { color: var(--muted); font-size: 12px; padding: 14px; text-align: center;
+               border: 1px dashed var(--line); border-radius: 10px; }
+    .adv-leg { display: flex; gap: 16px; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+    .adv-leg b { font-weight: 600; }
+
+    .formstrip { display: flex; gap: 4px; flex-wrap: wrap; margin: 2px 0 10px; }
+    .formsq { width: 18px; height: 18px; border-radius: 4px; font-size: 10px; font-weight: 700;
+              display: flex; align-items: center; justify-content: center; color: #0c1014; }
+    .chart { margin: 2px 0 10px; }
+    .chart svg { display: block; width: 100%; }
+    .chart-legend { display: flex; gap: 16px; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .chart-legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+    .mhead .switch { font-size: 12px; }
+    .ov { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 6px; }
+    .ov .wheel { text-align: center; flex: 0 0 auto; }
+    .ov .grow { flex: 1; min-width: 280px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <img src="dota_2_icon.png" alt="" />
+      <div><h1>Dota 2 Stats</h1><div class="sub">via OpenDota · cached locally</div></div>
+    </div>
+    <div class="controls">
+      <label class="switch" id="turboSwitch" title="Include Turbo matches in all stats">
+        <input type="checkbox" id="turbo" />
+        <span class="track"></span>
+        <span>Include Turbo</span>
+      </label>
+      <button id="refresh">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div class="profile" id="profile"><p class="psub">Loading profile…</p></div>
+
+  <div class="grid">
+    <div class="card"><h2>Win / Loss</h2><div id="winrate"><p class="muted">Loading…</p></div></div>
+    <div class="card"><h2>Career averages</h2><div id="performance"><p class="muted">Loading…</p></div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head">
+        <h2>Most-played heroes</h2>
+        <div class="search-wrap">
+          <input id="heroPageSearch" class="search" placeholder="Open hero stats…" autocomplete="off" />
+          <div id="heroPageSuggest" class="suggest"></div>
+        </div>
+      </div>
+      <div id="heroes"><p class="muted">Loading…</p></div>
+    </div>
+    <div class="col">
+      <div class="card"><h2>Breakdowns</h2><div id="breakdowns"><p class="muted">Loading…</p></div></div>
+      <div class="card grow-card"><h2 id="topwrTitle">Highest win rate</h2><div id="topwr"><p class="muted">Loading…</p></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2 id="recentTitle">Recent matches</h2>
+      <div class="search-wrap">
+        <input id="heroSearch" class="search" placeholder="Filter by hero…" autocomplete="off" />
+        <div id="heroSuggest" class="suggest"></div>
+      </div>
+    </div>
+    <div id="recent"><p class="muted">Loading…</p></div>
+  </div>
+
+  <div class="footer">Click a hero for its breakdown · click a match for the full scoreboard</div>
+
+  <div id="overlay"><div class="modal" id="modal"></div></div>
+
+  <script>
+    const invoke = window.__TAURI__.core.invoke;
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    const r0 = (n) => Math.round(n);
+    const r1 = (n) => (Math.round(n * 10) / 10).toFixed(1);
+    const kfmt = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : r0(n);
+    const fmtWhen = (ts) => ts ? new Date(ts * 1000).toLocaleString([], {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+    const fmtDay = (ts) => ts ? new Date(ts * 1000).toLocaleDateString([], {
+      year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+    const heroIcon = (slug, cls) => slug
+      ? `<img class="hicon${cls ? ' ' + cls : ''}" src="heroes/${esc(slug)}.png" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+      : `<span class="hicon${cls ? ' ' + cls : ''}"></span>`;
+    const resTag = (won) => won === true ? '<span class="res w">W</span>'
+                          : won === false ? '<span class="res l">L</span>'
+                          : '<span class="muted">?</span>';
+
+    // Turbo toggle: when on, every stat includes Turbo matches (significant=0).
+    let includeTurbo = false;
+    // Hero modal has its own Turbo switch, seeded from the global one on open.
+    let heroTurbo = false;
+    // Full hero list for the search box (id + name), loaded once.
+    let heroIndex = [];
+    // Active hero filter for the Recent matches table (null = all heroes).
+    let recentHeroFilter = null;
+
+    /* ---- tiny inline SVG charting (no deps) ---- */
+    const CW = 820, CH = 132, CP = 22;
+    function linePoints(values, lo, hi) {
+      const n = values.length, span = (hi - lo) || 1;
+      return values.map((v, i) => {
+        const x = CP + (n === 1 ? 0 : i / (n - 1) * (CW - 2 * CP));
+        const y = CH - CP - (v - lo) / span * (CH - 2 * CP);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+    }
+    // Uniform scaling (default preserveAspectRatio) so text labels aren't stretched.
+    function chartFrame(inner) {
+      return `<div class="chart"><svg viewBox="0 0 ${CW} ${CH}">${inner}</svg></div>`;
+    }
+    // Dot + value label at the maximum point of a series.
+    function peakMarker(values, lo, hi, color, fmt) {
+      const n = values.length;
+      let mi = 0;
+      for (let i = 1; i < n; i++) if (values[i] > values[mi]) mi = i;
+      const span = (hi - lo) || 1;
+      const x = CP + (n === 1 ? 0 : mi / (n - 1) * (CW - 2 * CP));
+      const y = CH - CP - (values[mi] - lo) / span * (CH - 2 * CP);
+      const anchor = x < 70 ? 'start' : x > CW - 70 ? 'end' : 'middle';
+      const ty = y - 9 < 13 ? y + 18 : y - 9;
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="${color}"/>
+        <text x="${x.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" fill="${color}"
+          font-size="13" font-weight="700">${fmt(values[mi])}</text>`;
+    }
+    // Reusable winrate wheel (donut).
+    function donutSVG(pct, cap, size) {
+      size = size || 124;
+      const c = size / 2, r = c - 10, C = 2 * Math.PI * r;
+      const dash = (pct / 100 * C).toFixed(1);
+      return `<svg class="donut" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--panel-3)" stroke-width="11"/>
+        <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--green)" stroke-width="11"
+          stroke-linecap="round" stroke-dasharray="${dash} ${C.toFixed(1)}" transform="rotate(-90 ${c} ${c})"/>
+        <text class="val" x="${c}" y="${c - 1}" text-anchor="middle">${r1(pct)}%</text>
+        <text class="cap" x="${c}" y="${c + 14}" text-anchor="middle">${cap}</text>
+      </svg>`;
+    }
+    function formStrip(ms) {
+      return `<div class="formstrip">${ms.map(m => {
+        const c = m.won === true ? 'var(--green)' : m.won === false ? 'var(--red-soft)' : 'var(--panel-3)';
+        const t = m.won === true ? 'W' : m.won === false ? 'L' : '?';
+        return `<span class="formsq" style="background:${c}" title="${fmtWhen(m.start_time)}">${t}</span>`;
+      }).join('')}</div>`;
+    }
+    function heroGraphs(matches) {
+      const ms = matches.slice().reverse(); // oldest -> newest, left -> right
+      if (ms.length < 2) return '';
+      const gpm = ms.map(m => m.gpm || 0), xpm = ms.map(m => m.xpm || 0);
+      const eLo = Math.min(...gpm, ...xpm), eHi = Math.max(...gpm, ...xpm);
+      const econ = chartFrame(
+        `<polyline points="${linePoints(gpm, eLo, eHi)}" fill="none" stroke="var(--gold)" stroke-width="2"/>
+         <polyline points="${linePoints(xpm, eLo, eHi)}" fill="none" stroke="#5aa9e6" stroke-width="2"/>
+         ${peakMarker(gpm, eLo, eHi, 'var(--gold)', r0)}
+         ${peakMarker(xpm, eLo, eHi, '#5aa9e6', r0)}`);
+      const kda = ms.map(m => m.kda || 0);
+      const kHi = Math.max(...kda, 1);
+      const avg = kda.reduce((a, b) => a + b, 0) / kda.length;
+      const aY = (CH - CP - avg / kHi * (CH - 2 * CP)).toFixed(1);
+      const kchart = chartFrame(
+        `<line x1="${CP}" y1="${aY}" x2="${CW - CP}" y2="${aY}" stroke="var(--line)" stroke-dasharray="4 4"/>
+         <polyline points="${linePoints(kda, 0, kHi)}" fill="none" stroke="var(--green)" stroke-width="2"/>
+         ${peakMarker(kda, 0, kHi, 'var(--green)', r1)}`);
+      return `
+        <div class="teamtitle">Recent form <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">(oldest → newest)</span></div>
+        ${formStrip(ms)}
+        <div class="teamtitle">GPM / XPM trend</div>
+        <div class="chart-legend"><span><i style="background:var(--gold)"></i>GPM</span><span><i style="background:#5aa9e6"></i>XPM</span></div>
+        ${econ}
+        <div class="teamtitle">KDA trend <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">(dashed = avg ${r1(avg)})</span></div>
+        ${kchart}`;
+    }
+
+    /* ---------------- main dashboard ---------------- */
+    async function loadProfile() {
+      try {
+        const p = await invoke('get_profile');
+        const rank = p.medal === 'Immortal'
+          ? (p.leaderboard_rank ? `Immortal #${p.leaderboard_rank}` : 'Immortal')
+          : `${p.medal} ${p.stars}`;
+        const mmr = p.mmr_estimate != null ? `${p.mmr_estimate} MMR` : 'MMR n/a';
+        $('profile').innerHTML = `
+          ${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<div class="avatar"></div>`}
+          <div>
+            <div class="pname">${esc(p.name)}</div>
+            <div class="psub"><span class="badge">${esc(rank)}</span><span>${esc(mmr)}</span></div>
+          </div>`;
+      } catch (e) { $('profile').innerHTML = `<p class="err">profile: ${esc(e)}</p>`; }
+    }
+
+    async function loadWinrate() {
+      try {
+        const w = await invoke('get_winrate', { includeTurbo });
+        $('winrate').innerHTML = `
+          <div class="wr-wrap">
+            ${donutSVG(w.winrate, 'WIN RATE', 124)}
+            <div class="wr-stats">
+              <div><div class="num" style="color:var(--green)">${w.win}</div><div class="lbl">wins</div></div>
+              <div><div class="num" style="color:var(--red-soft)">${w.lose}</div><div class="lbl">losses</div></div>
+              <div><div class="num">${w.total}</div><div class="lbl">games</div></div>
+            </div>
+          </div>`;
+      } catch (e) { $('winrate').innerHTML = `<p class="err">winrate: ${esc(e)}</p>`; }
+    }
+
+    async function loadPerformance() {
+      try {
+        const p = await invoke('get_performance', { includeTurbo });
+        const tiles = [
+          ['KDA', r1(p.kda)],
+          ['K / D / A', `${r1(p.kills)}/${r1(p.deaths)}/${r1(p.assists)}`],
+          ['GPM', r0(p.gpm)],
+          ['XPM', r0(p.xpm)],
+          ['Last hits', r0(p.last_hits)],
+          ['Denies', r0(p.denies)],
+          ['Hero dmg', kfmt(p.hero_damage)],
+          ['Avg length', r0(p.duration / 60) + 'm'],
+        ];
+        $('performance').innerHTML = `<div class="avgs">${tiles.map(([l, v]) =>
+          `<div class="avg"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
+      } catch (e) { $('performance').innerHTML = `<p class="err">averages: ${esc(e)}</p>`; }
+    }
+
+    async function loadHeroes() {
+      try {
+        const hs = await invoke('get_heroes', { n: 8, includeTurbo });
+        const max = Math.max(1, ...hs.map(h => h.games));
+        $('heroes').innerHTML = hs.map((h, i) => `
+          <div class="hero" data-hero="${h.hero_id}" data-icon="${esc(h.icon || '')}">
+            <span class="rank">${i + 1}</span>
+            ${heroIcon(h.icon)}
+            <div>
+              <div>${esc(h.hero)} <span class="muted">· ${h.games} games</span></div>
+              <div class="meter"><span style="width:${(h.games / max * 100).toFixed(0)}%"></span></div>
+            </div>
+            <span class="pct">${r0(h.winrate)}% <span class="chev">›</span></span>
+          </div>`).join('') || '<p class="muted">No hero data.</p>';
+      } catch (e) { $('heroes').innerHTML = `<p class="err">heroes: ${esc(e)}</p>`; }
+    }
+
+    function barRows(rows) {
+      const max = Math.max(1, ...rows.map(r => r.games));
+      return rows.map(r => `
+        <div class="bar">
+          <span>${esc(r.label)}</span>
+          <div class="track2"><div class="fill" style="width:${(r.games / max * 100).toFixed(0)}%"></div></div>
+          <span class="meta">${r0(r.winrate)}% · ${r.games}g</span>
+        </div>`).join('');
+    }
+
+    async function loadBreakdowns() {
+      try {
+        const b = await invoke('get_breakdowns', { includeTurbo });
+        const role = b.roles.length ? `<div class="bk-group"><div class="bk-title">By lane role</div>${barRows(b.roles)}</div>` : '';
+        const mode = b.modes.length ? `<div class="bk-group"><div class="bk-title">By game mode</div>${barRows(b.modes)}</div>` : '';
+        $('breakdowns').innerHTML = (role + mode) || '<p class="muted">No breakdown data.</p>';
+      } catch (e) { $('breakdowns').innerHTML = `<p class="err">breakdowns: ${esc(e)}</p>`; }
+    }
+
+    async function loadTopWinrate() {
+      try {
+        const d = await invoke('get_top_winrate', { n: 6, minGames: 5, includeTurbo });
+        $('topwrTitle').innerHTML = `Highest win rate <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">(≥${d.min_games} games)</span>`;
+        $('topwr').innerHTML = d.heroes.map((h, i) => `
+          <div class="hero" data-hero="${h.hero_id}">
+            <span class="rank">${i + 1}</span>
+            ${heroIcon(h.icon)}
+            <div>
+              <div>${esc(h.hero)} <span class="muted">· ${h.games} games</span></div>
+              <div class="meter"><span style="width:${r0(h.winrate)}%"></span></div>
+            </div>
+            <span class="pct">${r0(h.winrate)}% <span class="chev">›</span></span>
+          </div>`).join('') || '<p class="muted">Not enough games yet.</p>';
+      } catch (e) { $('topwr').innerHTML = `<p class="err">top winrate: ${esc(e)}</p>`; }
+    }
+
+    async function loadRecent() {
+      try {
+        const ms = await invoke('get_recent', { limit: 12, includeTurbo, heroId: recentHeroFilter });
+        const rows = ms.map(m => {
+          const tag = m.is_turbo ? '<span class="turbo-tag">Turbo</span>' : '';
+          return `<tr data-match="${m.match_id}">
+            <td>${resTag(m.won)}</td>
+            <td class="muted">${esc(fmtWhen(m.start_time))}</td>
+            <td><span class="hcell">${heroIcon(m.icon)}${esc(m.hero)}${tag}</span></td>
+            <td>${m.kills}/${m.deaths}/${m.assists}</td>
+            <td>${r1(m.kda)}</td>
+            <td class="muted">${r0(m.duration / 60)}m</td>
+          </tr>`;
+        }).join('');
+        $('recent').innerHTML = `<table>
+          <thead><tr><th>Res</th><th>Date / Time</th><th>Hero</th><th>K/D/A</th><th>KDA</th><th>Length</th></tr></thead>
+          <tbody>${rows}</tbody></table>`;
+      } catch (e) { $('recent').innerHTML = `<p class="err">recent: ${esc(e)}</p>`; }
+    }
+
+    async function loadHeroList() {
+      try { heroIndex = await invoke('get_hero_list'); }
+      catch (e) { /* search just won't autocomplete */ }
+    }
+    // Best name match: exact → prefix → substring (case-insensitive).
+    function resolveHero(q) {
+      q = q.trim().toLowerCase();
+      if (!q) return null;
+      return heroIndex.find(h => h.hero.toLowerCase() === q)
+          || heroIndex.find(h => h.hero.toLowerCase().startsWith(q))
+          || heroIndex.find(h => h.hero.toLowerCase().includes(q)) || null;
+    }
+    function openHero(heroId) { heroTurbo = includeTurbo; pushView(() => renderHero(heroId)); }
+
+    // Profile/rank are mode-independent; the Turbo toggle only reloads stats.
+    function loadStats() { loadWinrate(); loadPerformance(); loadHeroes(); loadBreakdowns(); loadTopWinrate(); loadRecent(); }
+    function loadAll() { loadProfile(); loadHeroList(); loadStats(); }
+
+    /* ---------------- modal view stack ---------------- */
+    const overlay = $('overlay'), modal = $('modal');
+    const stack = [];
+    function closeModal() { overlay.classList.remove('open'); stack.length = 0; }
+    async function pushView(fn) { stack.push(fn); await renderTop(); }
+    async function popView() { stack.pop(); stack.length ? renderTop() : closeModal(); }
+    async function renderTop() {
+      overlay.classList.add('open');
+      modal.innerHTML = '<div class="loading">Loading…</div>';
+      try { modal.innerHTML = await stack[stack.length - 1](); }
+      catch (e) { modal.innerHTML = `<div class="mbody err">${esc(e)}</div>`; }
+    }
+    function mHead(iconHtml, title, sub, extra) {
+      const back = stack.length > 1 ? `<button class="iconbtn" data-act="back" title="Back">‹</button>` : '';
+      return `<div class="mhead">${iconHtml}
+        <div><h3>${title}</h3><div class="sub">${sub}</div></div>
+        <div class="spacer"></div>${extra || ''}${back}
+        <button class="iconbtn" data-act="close" title="Close">✕</button></div>`;
+    }
+
+    /* ---- hero drill-down ---- */
+    async function renderHero(heroId) {
+      const d = await invoke('get_hero_detail', { heroId, includeTurbo: heroTurbo });
+      const sw = `<label class="switch${heroTurbo ? ' on' : ''}" title="Include Turbo matches for this hero">
+        <input type="checkbox" id="heroTurbo"${heroTurbo ? ' checked' : ''}/><span class="track"></span><span>Turbo</span></label>`;
+      const head = mHead(
+        heroIcon(d.icon, '').replace('hicon', 'hicon big'),
+        esc(d.hero),
+        `${d.games} games · ${r0(d.winrate)}% win · last played ${fmtDay(d.last_played)}`,
+        sw);
+      const avgNote = `last ${d.sample} games`;
+      const tiles = [
+        ['KDA', r1((d.avg_kills + d.avg_assists) / Math.max(1, d.avg_deaths))],
+        ['K / D / A', `${r1(d.avg_kills)}/${r1(d.avg_deaths)}/${r1(d.avg_assists)}`],
+        ['GPM', r0(d.avg_gpm)],
+        ['XPM', r0(d.avg_xpm)],
+        ['Last hits', r0(d.avg_last_hits)],
+        ['Hero dmg', kfmt(d.avg_hero_damage)],
+      ];
+      const grid = `<div class="avgs">${tiles.map(([l, v]) =>
+        `<div class="avg"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
+      const rows = d.matches.map(m => `<tr data-match="${m.match_id}">
+        <td>${resTag(m.won)}</td>
+        <td class="muted">${esc(fmtWhen(m.start_time))}</td>
+        <td>${m.kills}/${m.deaths}/${m.assists}</td>
+        <td>${r1(m.kda)}</td>
+        <td>${m.gpm ?? '—'}</td>
+        <td>${m.xpm ?? '—'}</td>
+        <td class="muted">${r0(m.duration / 60)}m${m.is_turbo ? ' <span class="turbo-tag">T</span>' : ''}</td>
+      </tr>`).join('');
+      const table = d.matches.length ? `
+        <div class="teamtitle">Recent matches on this hero</div>
+        <table><thead><tr><th>Res</th><th>Date / Time</th><th>K/D/A</th><th>KDA</th><th>GPM</th><th>XPM</th><th>Length</th></tr></thead>
+        <tbody>${rows}</tbody></table>` : '<p class="muted">No recent matches.</p>';
+      const overview = `<div class="ov">
+        <div class="wheel">${donutSVG(d.winrate, 'WIN RATE', 116)}
+          <div class="muted" style="font-size:12px;margin-top:2px">${d.win} / ${d.games} won</div></div>
+        <div class="grow">${grid}</div>
+      </div>`;
+      return head + `<div class="mbody">
+        <div class="teamtitle">Averages <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">(${avgNote})</span></div>
+        ${overview}
+        ${heroGraphs(d.matches)}
+        ${table}</div>`;
+    }
+
+    /* ---- match drill-down ---- */
+    function advChart(gold) {
+      if (!Array.isArray(gold) || gold.length < 2) {
+        return '<div class="advnote">Gold/XP graph unavailable — this match was not parsed by OpenDota.</div>';
+      }
+      const w = 820, h = 150, pad = 14, mid = h / 2;
+      const maxAbs = Math.max(1, ...gold.map(v => Math.abs(v)));
+      const pts = gold.map((v, i) => {
+        const x = pad + i / (gold.length - 1) * (w - 2 * pad);
+        const y = mid - (v / maxAbs) * (mid - pad);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      const area = `${pad},${mid} ${pts} ${(w - pad)},${mid}`;
+      return `
+        <div class="adv-leg"><span><b style="color:var(--radiant)">▲</b> Radiant lead</span>
+          <span><b style="color:var(--dire)">▼</b> Dire lead</span>
+          <span>peak ${kfmt(maxAbs)} gold</span></div>
+        <svg width="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="display:block">
+          <defs><linearGradient id="advg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--radiant)" stop-opacity=".30"/>
+            <stop offset="50%" stop-color="var(--radiant)" stop-opacity=".04"/>
+            <stop offset="100%" stop-color="var(--dire)" stop-opacity=".22"/>
+          </linearGradient></defs>
+          <polygon points="${area}" fill="url(#advg)"/>
+          <line x1="${pad}" y1="${mid}" x2="${w - pad}" y2="${mid}" stroke="var(--line)" stroke-dasharray="4 4"/>
+          <polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="2"/>
+        </svg>`;
+    }
+
+    function scoreRow(p) {
+      return `<tr class="${p.is_me ? 'me' : ''}">
+        <td><span class="hcell">${heroIcon(p.icon)}${esc(p.hero)}</span></td>
+        <td class="muted">${esc(p.name || '—')}</td>
+        <td>${p.level ?? '—'}</td>
+        <td>${p.kills}/${p.deaths}/${p.assists}</td>
+        <td>${p.net_worth != null ? kfmt(p.net_worth) : '—'}</td>
+        <td>${p.gpm ?? '—'}</td>
+        <td>${p.xpm ?? '—'}</td>
+        <td class="muted">${p.last_hits ?? '—'}/${p.denies ?? '—'}</td>
+        <td>${p.hero_damage != null ? kfmt(p.hero_damage) : '—'}</td>
+      </tr>`;
+    }
+    function teamTable(players, side, label, win) {
+      const rows = players.filter(p => p.radiant === side).map(scoreRow).join('');
+      const tag = win === true ? ' · Victory' : win === false ? ' · Defeat' : '';
+      return `<div class="teamtitle ${side ? 'radiant' : 'dire'}">${label}${tag}</div>
+        <table><thead><tr><th>Hero</th><th>Player</th><th>Lv</th><th>K/D/A</th><th>Net</th><th>GPM</th><th>XPM</th><th>LH/DN</th><th>Dmg</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+    async function renderMatch(matchId) {
+      const m = await invoke('get_match_detail', { matchId });
+      const rWin = m.radiant_win;
+      const winner = rWin === true ? '<span style="color:var(--radiant)">Radiant Victory</span>'
+                   : rWin === false ? '<span style="color:var(--dire)">Dire Victory</span>' : 'Result unknown';
+      const score = (m.radiant_score != null && m.dire_score != null)
+        ? `${m.radiant_score} – ${m.dire_score}` : '';
+      const head = mHead(
+        `<div class="big" style="display:flex;align-items:center;justify-content:center;font-size:22px">⚔</div>`,
+        winner,
+        `${fmtWhen(m.start_time)} · ${r0(m.duration / 60)}m${score ? ' · ' + score : ''} · #${m.match_id}`);
+      return head + `<div class="mbody">
+        ${advChart(m.gold_adv)}
+        ${teamTable(m.players, true, 'Radiant', rWin === true)}
+        ${teamTable(m.players, false, 'Dire', rWin === false)}
+      </div>`;
+    }
+
+    /* ---------------- events ---------------- */
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) return closeModal();
+      const act = e.target.closest('[data-act]');
+      if (act) { act.dataset.act === 'back' ? popView() : closeModal(); return; }
+      const mrow = e.target.closest('[data-match]');
+      if (mrow) return pushView(() => renderMatch(Number(mrow.dataset.match)));
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('open')) popView(); });
+
+    $('heroes').addEventListener('click', (e) => {
+      const h = e.target.closest('[data-hero]');
+      if (h) openHero(Number(h.dataset.hero));
+    });
+    $('topwr').addEventListener('click', (e) => {
+      const h = e.target.closest('[data-hero]');
+      if (h) openHero(Number(h.dataset.hero));
+    });
+    /* ---- reusable icon-dropdown hero search ---- */
+    function setupHeroSearch(input, box, { onSelect, onClear }) {
+      let items = [], active = -1;
+      const hide = () => { box.classList.remove('open'); active = -1; };
+      function render(q) {
+        q = q.trim().toLowerCase();
+        if (!q) { hide(); return; }
+        items = heroIndex
+          .filter(h => h.hero.toLowerCase().includes(q))
+          .sort((a, b) => {
+            const ap = a.hero.toLowerCase().startsWith(q) ? 0 : 1;
+            const bp = b.hero.toLowerCase().startsWith(q) ? 0 : 1;
+            return ap - bp || a.hero.localeCompare(b.hero);
+          })
+          .slice(0, 8);
+        if (!items.length) { hide(); return; }
+        active = 0;
+        box.innerHTML = items.map((h, i) =>
+          `<div class="opt${i === 0 ? ' active' : ''}" data-i="${i}">${heroIcon(h.icon)}<span>${esc(h.hero)}</span></div>`
+        ).join('');
+        box.classList.add('open');
+      }
+      function setActive(i) {
+        const opts = [...box.querySelectorAll('.opt')];
+        if (!opts.length) return;
+        active = (i + opts.length) % opts.length;
+        opts.forEach((o, k) => o.classList.toggle('active', k === active));
+        opts[active].scrollIntoView({ block: 'nearest' });
+      }
+      function pick() {
+        const h = (active >= 0 && items[active]) ? items[active] : resolveHero(input.value);
+        if (h) { hide(); onSelect(h); }
+        else { input.classList.add('miss'); setTimeout(() => input.classList.remove('miss'), 800); }
+      }
+      input.addEventListener('input', (e) => {
+        if (!e.target.value.trim()) { hide(); onClear && onClear(); return; }
+        render(e.target.value);
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') { e.preventDefault(); setActive(active + 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(active - 1); }
+        else if (e.key === 'Escape') { hide(); }
+        else if (e.key === 'Enter') { e.preventDefault(); pick(); }
+      });
+      // mousedown (not click) so it fires before the input's blur hides the box.
+      box.addEventListener('mousedown', (e) => {
+        const opt = e.target.closest('.opt');
+        if (opt) { e.preventDefault(); hide(); onSelect(items[Number(opt.dataset.i)]); }
+      });
+      input.addEventListener('blur', () => setTimeout(hide, 120));
+    }
+
+    // Recent-matches search → filters the table in place.
+    function selectRecentHero(h) {
+      recentHeroFilter = h.hero_id;
+      $('heroSearch').value = h.hero;
+      $('recentTitle').innerHTML =
+        `Recent matches <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· ${esc(h.hero)}</span>` +
+        `<span class="filter-clear" id="clearFilter" title="Show all heroes">✕</span>`;
+      loadRecent();
+    }
+    function clearFilter() {
+      recentHeroFilter = null;
+      $('heroSearch').value = '';
+      $('recentTitle').textContent = 'Recent matches';
+      loadRecent();
+    }
+    setupHeroSearch($('heroSearch'), $('heroSuggest'), {
+      onSelect: selectRecentHero,
+      onClear: () => { if (recentHeroFilter !== null) clearFilter(); },
+    });
+    $('recentTitle').addEventListener('click', (e) => { if (e.target.id === 'clearFilter') clearFilter(); });
+
+    // Most-played-heroes search → opens the hero stats modal.
+    const heroPageInput = $('heroPageSearch');
+    setupHeroSearch(heroPageInput, $('heroPageSuggest'), {
+      onSelect: (h) => { heroPageInput.value = ''; openHero(h.hero_id); },
+    });
+    // In-view Turbo switch re-fetches the hero detail in place.
+    overlay.addEventListener('change', (e) => {
+      if (e.target.id === 'heroTurbo') { heroTurbo = e.target.checked; renderTop(); }
+    });
+    $('recent').addEventListener('click', (e) => {
+      const r = e.target.closest('[data-match]');
+      if (r) pushView(() => renderMatch(Number(r.dataset.match)));
+    });
+
+    $('refresh').addEventListener('click', loadAll);
+    $('turbo').addEventListener('change', (e) => {
+      includeTurbo = e.target.checked;
+      $('turboSwitch').classList.toggle('on', includeTurbo);
+      loadStats();
+    });
+
+    loadAll();
+  </script>
+</body>
+</html>

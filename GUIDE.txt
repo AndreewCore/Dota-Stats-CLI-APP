@@ -1,0 +1,610 @@
+===============================================================================
+ DOTA 2 STATS — A COMPLETE WALKTHROUGH FOR SOMEONE NEW TO RUST
+===============================================================================
+
+Audience: a computer science student who can program (in some language) but has
+never written or read Rust. This file explains WHAT we are building, WHY it is
+shaped the way it is, and HOW every piece of the Rust code works, line of
+reasoning by line of reasoning.
+
+Read it top to bottom. Each section builds on the last. There is a glossary at
+the very end if a word is unfamiliar.
+
+
+===============================================================================
+ PART 0 — THE 30-SECOND SUMMARY
+===============================================================================
+
+We are building a personal Dota 2 statistics tool. It reads your match data
+from a free web service called OpenDota and shows it two ways:
+
+  1. A command-line program (CLI) you run in a terminal, e.g.
+        dota-stats winrate   ->   223W 276L  (44.7% over 499)
+     This is ALSO what your status-bar widgets (waybar / eww / polybar) will
+     call to show a live stat.
+
+  2. (Later) A desktop application with a real window — built with a framework
+     called Tauri — that shows the same data as a dashboard.
+
+Both share ONE piece of code (called "core") that talks to OpenDota and caches
+the answers on disk so we don't re-download the same data constantly.
+
+That is the whole project. The rest of this file explains the parts.
+
+
+===============================================================================
+ PART 1 — THE BIG PICTURE (ARCHITECTURE)
+===============================================================================
+
+Think of the system as three layers:
+
+        OpenDota API   (a website that returns JSON when you ask it)
+              |
+              |  HTTPS request, e.g. https://api.opendota.com/api/players/12345678
+              v
+   +------------------------+
+   |   core   (a library)   |   <- talks to OpenDota, caches results, defines
+   |                        |      the data shapes (structs). Knows nothing
+   +------------------------+      about terminals or windows.
+        |               |
+        v               v
+   +---------+     +-----------+
+   |   cli   |     |  app (GUI)|   <- two different "front ends" that both USE
+   | binary  |     |  Tauri    |      core. One prints text, one draws a window.
+   +---------+     +-----------+
+
+WHY split it like this?
+
+- "core" is the single source of truth. If OpenDota changes, we fix ONE place.
+- The CLI and the GUI never duplicate the networking/caching logic.
+- Your bar widgets just run the CLI; the GUI calls core directly.
+
+WHY a cache?
+
+OpenDota is free but rate-limited (you may only ask so many times per minute).
+A status bar might refresh every few minutes, and the GUI re-reads on open. If
+every refresh hit the network we'd quickly get throttled. So core saves each
+answer to a file with a timestamp, and only re-downloads when the saved copy is
+older than a "time to live" (TTL). Profile data changes slowly (TTL 6 hours);
+recent matches change faster (TTL 10 minutes).
+
+
+===============================================================================
+ PART 2 — RUST IN 15 MINUTES (ONLY WHAT YOU NEED TO READ OUR CODE)
+===============================================================================
+
+Rust is a compiled, statically-typed language (like C++ or Go in spirit). A few
+ideas are enough to read everything we wrote.
+
+2.1 PACKAGES, CRATES, MODULES, AND CARGO
+----------------------------------------
+- "cargo" is Rust's build tool + package manager (like npm for Node, pip for
+  Python, or Maven for Java — all in one).
+- A "crate" is a unit of compilation. Two kinds:
+    * a LIBRARY crate (reusable code, no entry point) — our "core".
+    * a BINARY crate (an executable with a main function) — our "cli".
+- A "package" is a folder with a Cargo.toml describing one or more crates.
+- A "workspace" is a folder that groups several packages so they build together
+  and share one lock file. Our top-level Cargo.toml is the workspace.
+- A "module" (mod) is a namespace WITHIN a crate (like a file/section). We have
+  modules: config, cache, client, models, error.
+
+So the hierarchy is:
+    workspace (the repo)
+      package crates/core  -> library crate "dota_stats_core"
+        modules: config, cache, client, models, error
+      package crates/cli   -> binary crate producing the "dota-stats" program
+
+2.2 Cargo.toml AND Cargo.lock
+-----------------------------
+- Cargo.toml is what YOU write: the package name, and its dependencies
+  ("I need the 'ureq' crate, version 2"). Think package.json / requirements.txt.
+- Cargo.lock is what cargo GENERATES: the EXACT versions of every dependency
+  (and their dependencies) that were actually used. Committing it means everyone
+  builds the identical tree. `cargo build --locked` refuses to change it — a
+  safety property we want (see Part 8 on supply chain).
+
+2.3 VARIABLES, TYPES, FUNCTIONS
+-------------------------------
+    let x = 5;            // immutable by default (you cannot reassign x)
+    let mut y = 5;        // 'mut' makes it mutable
+    let name: String = ...;  // type annotations use  name: Type
+
+    fn add(a: u32, b: u32) -> u32 {   // -> is the return type
+        a + b            // no semicolon = this is the return value
+    }
+
+Common number types you'll see: u32 (unsigned 32-bit int), u64, i64 (signed),
+f64 (64-bit float). "String" is an owned, growable text buffer; "&str" is a
+borrowed view into text (more on "borrowing" below).
+
+2.4 OWNERSHIP & BORROWING (the famous part — the practical version)
+-------------------------------------------------------------------
+Rust has no garbage collector. Instead, every value has exactly ONE owner, and
+when the owner goes out of scope the value is freed automatically. To let other
+code use a value without taking ownership, you "borrow" it with & (a reference).
+
+    fn print_len(s: &String) { ... }   // borrows s; caller still owns it
+    let a = String::from("hi");
+    print_len(&a);                     // lend it
+    // a is still usable here
+
+You will see & all over our code (e.g. &self, &cfg, &format!(...)). For reading
+our project you mostly need to know: "& means 'a borrowed reference to', and the
+compiler guarantees you can't misuse it." You do NOT need to master this to
+follow the logic.
+
+2.5 STRUCTS, ENUMS, IMPL, TRAITS
+--------------------------------
+A struct groups named fields (like a class with only data):
+
+    struct WinLoss {
+        win: u32,
+        lose: u32,
+    }
+
+An "impl" block adds methods to a struct:
+
+    impl WinLoss {
+        fn total(&self) -> u32 { self.win + self.lose }
+    }
+    // &self means "this method borrows the instance" (like 'this' in Java).
+
+An enum is a type that is ONE OF several variants — and variants can hold data:
+
+    enum Error {
+        Http(String),     // an Http error carrying a message
+        Io(std::io::Error),
+        Config(String),
+    }
+
+This is far more powerful than enums in C/Java; it's a "tagged union". We use it
+for our error type and Rust uses it for the two most important types you'll see:
+Option and Result (next).
+
+A "trait" is like an interface: a set of methods a type can implement. We rarely
+declare traits ourselves, but we USE them via "derive" (Part 2.7).
+
+2.6 Option AND Result — HOW RUST HANDLES "MAYBE" AND "FAILURE"
+-------------------------------------------------------------
+There is no "null" in Rust. Instead:
+
+    enum Option<T> { Some(T), None }     // a value that may be absent
+    enum Result<T, E> { Ok(T), Err(E) }  // an operation that may fail
+
+(The <T> means "generic over any type T".)
+
+You handle them explicitly, usually with `match` or with the `?` operator:
+
+    match player.rank_tier {
+        Some(tier) => println!("rank {tier}"),
+        None       => println!("uncalibrated"),
+    }
+
+The `?` operator is the workhorse. On a Result, `expr?` means:
+    "if expr is Ok(v), give me v; if it's Err(e), STOP this function and return
+     that error to my caller."
+So this:
+    let body = req.call()?.into_string()?;
+means "make the request; if it failed, bubble the error up; otherwise continue
+with the response, turn it into a string; if THAT failed, bubble up too." It
+replaces the try/catch ladders you'd write elsewhere, but it is explicit in the
+types: a function that uses `?` must itself return a Result.
+
+2.7 DERIVE MACROS (the #[derive(...)] lines)
+--------------------------------------------
+Above many structs you'll see:
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct Profile { ... }
+
+A "derive" auto-generates boilerplate trait implementations at compile time:
+- Debug   -> lets you print it for debugging with {:?}
+- Clone   -> lets you make a deep copy with .clone()
+- Serialize / Deserialize  -> (from the "serde" crate) lets the struct be
+  converted TO and FROM JSON automatically. This is the magic that turns
+  OpenDota's JSON text into our Rust structs with one function call.
+
+2.8 println! AND THE ! (MACROS)
+-------------------------------
+Anything with a ! is a MACRO, not a function: println!, format!, vec!,
+serde_json::json!. For our purposes treat them like functions with superpowers
+(e.g. println! checks your format string at compile time). format!("{x}") builds
+a String using the variable x.
+
+
+===============================================================================
+ PART 3 — TOUR OF THE PROJECT FILES
+===============================================================================
+
+Top level:
+    Cargo.toml            workspace definition + shared dependency versions
+    Cargo.lock            exact locked versions (generated)
+    README.md             user-facing docs
+    GUIDE.txt             this file
+    config.example.toml   sample config you can copy
+    crates/
+      core/  ...          the library
+      cli/   ...          the dota-stats binary
+
+We'll go through the code files in the order that makes them easiest to learn.
+
+
+===============================================================================
+ PART 4 — THE "core" LIBRARY, FILE BY FILE
+===============================================================================
+
+core/src/lib.rs  — THE LIBRARY'S FRONT DOOR
+-------------------------------------------
+    pub mod cache;
+    pub mod client;
+    pub mod config;
+    pub mod error;
+    pub mod models;
+
+    pub use client::OpenDota;
+    pub use config::Config;
+    pub use error::{Error, Result};
+
+- `pub mod cache;` tells the compiler "there is a module named cache, in the
+  file cache.rs; make it public." `pub` = visible to code outside this crate.
+- `pub use ...` re-exports names so users can write `dota_stats_core::Config`
+  instead of the longer `dota_stats_core::config::Config`. Convenience only.
+
+core/src/error.rs — OUR ERROR TYPE
+----------------------------------
+We define one enum, Error, listing every category of thing that can go wrong:
+Http, Parse, Io, Config. Then:
+
+    pub type Result<T> = std::result::Result<T, Error>;
+
+This is a type ALIAS. From now on, when we write `Result<Profile>` we mean
+`std::result::Result<Profile, Error>` — i.e. "Ok(Profile) or Err(our Error)".
+Saves typing and keeps the error type consistent across the crate.
+
+The `impl From<...> for Error` blocks are the secret behind the `?` operator.
+When you write `something()?` and `something` returns a DIFFERENT error type
+(say a ureq::Error), Rust automatically calls our `From<ureq::Error>` conversion
+to turn it into OUR Error before returning. That's why one `?` can absorb errors
+from networking, file IO, and JSON parsing uniformly.
+
+`impl Display` defines how an Error prints as human text ("http error: ...").
+`impl std::error::Error for Error {}` marks it as a standard error type.
+
+core/src/config.rs — WHERE SETTINGS LIVE
+----------------------------------------
+    pub const PLACEHOLDER_ACCOUNT_ID: u64 = 0;
+
+A placeholder written into a fresh config file; the app refuses to run
+until you replace it with your own account id (example: 12345678).
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Config {
+        pub account_id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub api_key: Option<String>,
+    }
+
+- account_id is required.
+- api_key is Optional. The #[serde(...)] attribute customizes JSON/TOML
+  behavior: `default` means "if missing in the file, use None"; the skip rule
+  means "don't write it out when it's None" (keeps the file clean).
+
+`config_dir()` figures out WHERE to store the file, following the Linux
+convention: use $XDG_CONFIG_HOME if set, else ~/.config. It reads environment
+variables with std::env::var_os and builds a path with PathBuf (Rust's
+filesystem path type).
+
+`Config::load_or_init()` is the key method:
+    if the file exists -> read it and parse the TOML into a Config struct.
+    if not             -> create a default Config, WRITE it to disk, return it.
+So the very first run auto-creates ~/.config/dota-stats/config.toml for you.
+
+`toml::from_str(&text)` is the parse; it works because Config derives
+Deserialize. The same machinery that reads JSON reads TOML.
+
+core/src/cache.rs — THE ON-DISK CACHE
+-------------------------------------
+Three small functions:
+
+- `cache_dir()` — like config_dir but for ~/.cache/dota-stats.
+- `get(key, ttl)` — given a cache key (e.g. "player_12345678") and a maximum
+  age (ttl), it:
+      * looks up the file <cache_dir>/<key>.json
+      * if it doesn't exist -> return Ok(None)  (cache miss)
+      * else compute its age from the file's modified time
+      * if age <= ttl -> return Ok(Some(file_contents))   (cache hit, fresh)
+      * else -> return Ok(None)   (too old; treat as a miss so we re-fetch)
+- `put(key, data)` — write the JSON string to that file.
+
+`entry_path` sanitizes the key so it can't contain weird characters that would
+escape the cache folder (defensive: only letters/digits/_/- survive).
+
+Notice the return type is `Result<Option<String>>`: the OUTER Result is "did the
+file operation error?"; the INNER Option is "was there a usable cached value?".
+That nesting is idiomatic Rust and reads cleanly with `?`.
+
+core/src/models.rs — THE DATA SHAPES
+------------------------------------
+This file is just structs that mirror the JSON OpenDota returns, plus a few
+helper methods. Example:
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct MatchSummary {
+        pub match_id: u64,
+        #[serde(default)] pub player_slot: u32,
+        #[serde(default)] pub radiant_win: Option<bool>,
+        #[serde(default)] pub hero_id: u32,
+        #[serde(default)] pub kills: u32,
+        ...
+    }
+
+When serde deserializes OpenDota's JSON, it matches JSON keys to these field
+names. `#[serde(default)]` means "if this key is missing, use the type's default
+(0 for numbers, None for Option)" — important because real-world APIs omit
+fields. We only declare the fields we actually use; serde ignores the rest.
+
+The `impl MatchSummary` block adds computed helpers:
+    is_radiant()  -> player_slot < 128   (Dota: slots 0-127 are Radiant team)
+    won()         -> Some(true/false): you won iff your team is the winning team
+    kda()         -> (kills + assists) / max(deaths, 1)   (avoid divide-by-zero)
+
+`medal_name(rank_tier)` converts Dota's numeric rank (e.g. 54) into a medal name
+("Legend"); the tens digit is the medal, the ones digit is the star count. This
+is the practical reason your `rank` command can print "Guardian 3".
+
+core/src/client.rs — THE OPENDOTA CLIENT (the heart)
+----------------------------------------------------
+Constants set the cache freshness per endpoint:
+
+    const TTL_PROFILE:  Duration = Duration::from_secs(6 * 3600); // 6 hours
+    const TTL_MATCHES:  Duration = Duration::from_secs(10 * 60);  // 10 minutes
+    ...
+
+The struct holds your identity:
+
+    pub struct OpenDota { account_id: u64, api_key: Option<String> }
+
+The crucial private method ties caching + networking together:
+
+    fn get_raw(&self, path, cache_key, ttl) -> Result<String> {
+        if let Some(hit) = cache::get(cache_key, ttl)? {   // 1. try cache
+            return Ok(hit);
+        }
+        let mut req = ureq::get(&format!("{BASE}{path}"));  // 2. build request
+        if let Some(key) = &self.api_key {
+            req = req.query("api_key", key);                //    add key if any
+        }
+        let body = req.call()?.into_string()?;              // 3. send + read
+        cache::put(cache_key, &body)?;                      // 4. save to cache
+        Ok(body)                                            // 5. return JSON
+    }
+
+Read that as a sentence: "If we have a fresh cached answer, return it. Otherwise
+ask OpenDota over HTTPS, store the answer, and return it." Every public method
+goes through this, so caching is automatic and uniform.
+
+    fn get_json<T: DeserializeOwned>(&self, ...) -> Result<T> {
+        let raw = self.get_raw(...)?;
+        serde_json::from_str(&raw).map_err(Error::from)
+    }
+
+This is GENERIC: `<T: DeserializeOwned>` means "for any type T that serde knows
+how to build from JSON." So the SAME function produces a PlayerResponse, a
+WinLoss, or a Vec<HeroStat>, depending on what the caller asks for. That's why
+the public methods are tiny one-liners:
+
+    pub fn player(&self)     -> Result<PlayerResponse> { self.get_json(...) }
+    pub fn win_loss(&self)   -> Result<WinLoss>        { self.get_json(...) }
+    pub fn heroes(&self)     -> Result<Vec<HeroStat>>  { self.get_json(...) }
+    pub fn recent_matches(&self, limit) -> Result<Vec<MatchSummary>> { ... }
+
+`hero_names()` fetches OpenDota's hero list once (cached a week) and builds a
+HashMap from hero_id -> name, so other code can turn id 86 into "Rubick".
+
+(Vec<T> is Rust's growable array/list; HashMap<K,V> is a dictionary.)
+
+
+===============================================================================
+ PART 5 — THE "cli" BINARY (crates/cli/src/main.rs)
+===============================================================================
+
+This is the executable. Its job: read command-line arguments, call core, print
+results. It has NO networking or caching of its own — it delegates to core.
+
+ENTRY POINT
+-----------
+    fn main() -> ExitCode {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        match run(&args) {
+            Ok(())  => ExitCode::SUCCESS,
+            Err(e)  => { eprintln!("error: {e}"); ExitCode::FAILURE }
+        }
+    }
+
+- std::env::args() yields the program's arguments; .skip(1) drops the program
+  name; .collect() gathers them into a Vec<String> (a list of strings).
+- We call run(); if it returns Err, we print to stderr and exit non-zero. This
+  is the one place errors stop bubbling — `main` turns them into an exit code.
+
+DISPATCH
+--------
+    fn run(args) -> Result<()> {
+        let cmd = args.first()...;          // first arg = the subcommand
+        ...
+        let cfg = Config::load_or_init()?;  // load settings (auto-create)
+        let api = OpenDota::new(&cfg);       // build the client
+        match cmd {
+            "profile"  => cmd_profile(&api, json),
+            "winrate"  => cmd_winrate(&api, json),
+            "heroes"   => cmd_heroes(&api, opt_value(args,"--n").unwrap_or(5), json),
+            "widget"   => cmd_widget(&api, args.get(1)...),
+            ...
+        }
+    }
+
+`Result<()>` means "succeeds with no useful value, or fails with an Error." The
+`()` type is the "unit" — Rust's equivalent of void.
+
+`opt_value(args, "--n")` is our tiny hand-written flag parser: find "--n", take
+the next argument, parse it as a number. We deliberately did NOT pull in a big
+argument-parsing library (clap) to keep dependencies minimal.
+
+THE COMMAND FUNCTIONS
+---------------------
+Each cmd_* function: calls a core method, then either prints human text or, if
+--json was passed, prints JSON. Example (winrate):
+
+    fn cmd_winrate(api, json) -> Result<()> {
+        let wl = api.win_loss()?;            // core does the work + caching
+        if json {
+            println!("{}", serde_json::json!({
+                "win": wl.win, "lose": wl.lose,
+                "total": wl.total(), "winrate": wl.winrate()
+            }));
+        } else {
+            println!("{}W {}L  ({:.1}% over {})",
+                     wl.win, wl.lose, wl.winrate(), wl.total());
+        }
+        Ok(())
+    }
+
+`{:.1}` formats a float to 1 decimal place. `serde_json::json!{...}` builds a
+JSON value inline.
+
+THE widget SUBCOMMAND
+---------------------
+`cmd_widget` produces a single line of JSON shaped for status bars:
+    {"text": "...", "tooltip": "..."}
+waybar reads exactly this shape. For each metric (mmr, rank, winrate, top-hero)
+it computes a short text and a longer tooltip. Note the design decision baked in:
+because OpenDota deprecated numeric MMR for most accounts, `widget mmr` FALLS
+BACK to showing your medal ("Guardian 3") instead of a useless "n/a".
+
+
+===============================================================================
+ PART 6 — HOW DATA FLOWS WHEN YOU RUN A COMMAND
+===============================================================================
+
+Command:  dota-stats winrate
+
+  1. main() collects args -> ["winrate"].
+  2. run() loads config (your account_id) and builds an OpenDota client.
+  3. It matches "winrate" and calls cmd_winrate.
+  4. cmd_winrate calls api.win_loss().
+  5. core's win_loss() calls get_json -> get_raw with key "wl_12345678",
+     ttl 30 min.
+  6. get_raw checks the cache file ~/.cache/dota-stats/wl_12345678.json.
+        - Fresh? return its contents (no network).
+        - Missing/old? HTTPS GET https://api.opendota.com/api/players/12345678/wl,
+          save the JSON to that file, return it.
+  7. serde parses the JSON text into a WinLoss struct { win, lose }.
+  8. cmd_winrate computes winrate() and prints:  223W 276L  (44.7% over 499)
+
+The first run touches the network; subsequent runs within the TTL are instant
+and offline. That is exactly what makes it safe to refresh from a status bar.
+
+
+===============================================================================
+ PART 7 — BUILDING AND RUNNING (WHAT THE COMMANDS MEAN)
+===============================================================================
+
+    cargo build
+        Compiles everything. Downloads dependencies the first time. Produces
+        unoptimized binaries under target/debug/. (This is why the first build
+        took ~80 seconds — it compiled ~40 dependency crates too.)
+
+    cargo build --release
+        Optimized build (slower to compile, faster to run) under target/release/.
+
+    cargo build --locked
+        Same, but refuses to modify Cargo.lock. Use it to guarantee you build
+        the exact, reviewed dependency versions (supply-chain safety).
+
+    ./target/debug/dota-stats winrate
+        Runs the program we just built. (cargo run -p dota-stats-cli -- winrate
+        does the same via cargo.)
+
+target/ is generated output; it is in .gitignore and never committed.
+
+
+===============================================================================
+ PART 8 — THE SUPPLY-CHAIN REASONING (WHY THESE CHOICES)
+===============================================================================
+
+You (rightly) flagged the June 2026 AUR incident, where attackers hijacked
+abandoned Arch User Repository packages to pull malicious npm packages. Lessons
+baked into THIS project:
+
+- We install the toolchain from the OFFICIAL, signed Arch repos via pacman, not
+  the AUR. The AUR is where that attack lived; the official repos were untouched.
+- For HTTP we chose `ureq` instead of the more common `reqwest`. reqwest drags
+  in a large async stack (tokio, hyper, ...). ureq is small, blocking, and uses
+  rustls (pure-Rust TLS, no OpenSSL). Fewer dependencies = smaller attack
+  surface and faster, simpler builds.
+- We hand-wrote argument parsing instead of adding the `clap` crate. One less
+  dependency.
+- We commit Cargo.lock and build with --locked so dependencies can't silently
+  change underneath us.
+- (Recommended next) run `cargo audit`, which checks every locked dependency
+  against a database of known security advisories.
+
+The reason the GUI step (Tauri) deserves a pause: a GUI framework necessarily
+pulls in HUNDREDS of crates (window management, the web view, etc.). That's
+normal, but it's a big jump in dependency surface from where we are now (~40
+crates). So it's worth deciding deliberately, and auditing around it.
+
+
+===============================================================================
+ PART 9 — WHAT TAURI IS (THE NEXT STEP, PREVIEWED)
+===============================================================================
+
+Tauri is a framework for building desktop apps where:
+  - the WINDOW and system integration are handled by a small Rust program, and
+  - the USER INTERFACE is a web page (HTML/CSS/JavaScript) rendered by your
+    operating system's built-in web view (on Linux: webkit2gtk — which is why
+    we installed it).
+
+Unlike Electron, Tauri does NOT bundle a whole browser, so the apps are small
+(a few MB) and start fast. Our plan: the Rust side exposes "commands" that call
+our existing `core`; the HTML/JS front end calls those commands and draws the
+dashboard (profile, winrate, recent matches, top heroes).
+
+Deliberate choice for safety: our Tauri front end will be PLAIN HTML/CSS/JS with
+NO npm/Node build step — so we never touch the npm ecosystem that the AUR attack
+abused. We point Tauri at a folder of static files; that's it.
+
+
+===============================================================================
+ PART 10 — GLOSSARY
+===============================================================================
+
+API            A web service you send requests to and get data back (here JSON).
+Binary crate   A Rust project that compiles to a runnable program (has main()).
+Borrow (&)     Use a value without taking ownership of it.
+Cache          A local saved copy of remote data, to avoid re-fetching.
+Cargo          Rust's build tool + package manager.
+Crate          A Rust compilation unit (a library or a binary).
+Deserialize    Turn text (JSON/TOML) into in-memory structs.
+Derive         Auto-generate trait code with #[derive(...)].
+Enum           A type that is exactly one of several named variants.
+Generic <T>    Code that works for many types, chosen by the caller.
+JSON           A text format for structured data ({ "win": 223 }).
+Macro (name!)  Code that generates code at compile time (println!, format!).
+Module (mod)   A namespace inside a crate.
+Option<T>      Some(value) or None — Rust's "maybe", instead of null.
+Ownership      Each value has one owner; freed when the owner ends. No GC.
+Result<T,E>    Ok(value) or Err(error) — explicit success/failure.
+Rustls         A TLS (HTTPS encryption) library written in Rust.
+Serde          The Rust library for serialize/deserialize (JSON, TOML, ...).
+Serialize      Turn structs into text (JSON/TOML).
+Struct         A record with named fields.
+Trait          An interface: a set of methods a type can implement.
+TTL            Time To Live: how long a cached value stays "fresh".
+Vec<T>         A growable array/list.
+Workspace      A group of packages built together with one lock file.
+? operator     "Unwrap Ok, or return the Err from this function."
+
+===============================================================================
+ END. You now have enough to read every file in crates/ with understanding.
+===============================================================================
