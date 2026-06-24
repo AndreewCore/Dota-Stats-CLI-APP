@@ -94,21 +94,3 @@ interval = 600
 ```
 
 ---
-
-## Open decision (pending your answer)
-
-The CLI + core are done and verified. The remaining piece is the **Tauri GUI**,
-which is the step that pulls a **large dependency tree** (hundreds of crates vs.
-the ~40 lean ones we have now). See `GUIDE.txt` Parts 8–9 for the full reasoning.
-
-**How should we handle the Tauri GUI step?**
-
-1. **Audit, then build GUI** — install `cargo-audit` (a crates.io pull) + run
-   `cargo tree` on the current deps, review, then scaffold the Tauri app and
-   re-audit. Most cautious.
-2. **Build GUI now** — go straight to scaffolding the Tauri app; audit afterward.
-   Faster.
-3. **Stop at the CLI for now** — the CLI + widgets cover the need; defer the GUI
-   entirely and keep the dependency surface minimal.
-
-Reply with 1, 2, or 3 (or your own variation) and I'll proceed.
