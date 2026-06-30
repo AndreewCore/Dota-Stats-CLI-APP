@@ -2,7 +2,7 @@
 //! waybar / eww / polybar. All data comes from the shared cached core.
 
 use dota_stats_core::models::{medal_name, medal_stars};
-use dota_stats_core::{Config, OpenDota, Result};
+use dota_stats_core::{OpenDota, Result, UsersStore};
 use std::collections::HashMap;
 use std::process::ExitCode;
 
@@ -21,6 +21,12 @@ COMMANDS:
     top-hero             Single most-played hero
     recent [--limit N]   Recent matches (default 10)
     widget <METRIC>      One-line JSON for bars: mmr|rank|winrate|top-hero
+
+PROFILES:
+    users                List saved profiles (★ marks the active one)
+    use <ACCOUNT_ID>     Make a saved profile the active one
+    add <ACCOUNT_ID> [LABEL]   Save a profile (first one becomes active)
+    remove <ACCOUNT_ID>  Delete a saved profile
 
 OPTIONS:
     --turbo              Include Turbo matches in stats (default: core only)
@@ -48,7 +54,16 @@ fn run(args: &[String]) -> Result<()> {
     let json = args.iter().any(|a| a == "--json");
     let turbo = args.iter().any(|a| a == "--turbo");
 
-    let cfg = Config::load_or_init()?;
+    // Profile management works regardless of whether one is selected yet.
+    match cmd {
+        "users" => return cmd_users(),
+        "use" => return cmd_use(args.get(1).map(String::as_str)),
+        "add" => return cmd_add(args.get(1).map(String::as_str), args.get(2).map(String::as_str)),
+        "remove" => return cmd_remove(args.get(1).map(String::as_str)),
+        _ => {}
+    }
+
+    let cfg = UsersStore::load()?.active_config()?;
     let api = OpenDota::new(&cfg);
 
     match cmd {
@@ -72,6 +87,53 @@ fn run(args: &[String]) -> Result<()> {
 fn opt_value(args: &[String], flag: &str) -> Option<u32> {
     let i = args.iter().position(|a| a == flag)?;
     args.get(i + 1)?.parse().ok()
+}
+
+fn parse_account_id(arg: Option<&str>) -> Result<u64> {
+    use dota_stats_core::Error;
+    arg.and_then(|s| s.parse::<u64>().ok())
+        .filter(|id| *id != 0)
+        .ok_or_else(|| Error::Config("expected a non-zero account_id".into()))
+}
+
+fn cmd_users() -> Result<()> {
+    let store = UsersStore::load()?;
+    if store.profiles.is_empty() {
+        println!("No profiles yet. Add one with: dota-stats add <ACCOUNT_ID> [LABEL]");
+        return Ok(());
+    }
+    for p in &store.profiles {
+        let mark = if store.selected == Some(p.account_id) { "★" } else { " " };
+        println!("{mark} {} ({})", p.label, p.account_id);
+    }
+    Ok(())
+}
+
+fn cmd_use(arg: Option<&str>) -> Result<()> {
+    let id = parse_account_id(arg)?;
+    let mut store = UsersStore::load()?;
+    store.set_selected(id)?;
+    store.save()?;
+    println!("Active profile set to {id}");
+    Ok(())
+}
+
+fn cmd_add(id_arg: Option<&str>, label_arg: Option<&str>) -> Result<()> {
+    let id = parse_account_id(id_arg)?;
+    let mut store = UsersStore::load()?;
+    store.add(label_arg.unwrap_or(""), id)?;
+    store.save()?;
+    println!("Saved profile {id}");
+    Ok(())
+}
+
+fn cmd_remove(arg: Option<&str>) -> Result<()> {
+    let id = parse_account_id(arg)?;
+    let mut store = UsersStore::load()?;
+    store.remove(id);
+    store.save()?;
+    println!("Removed profile {id}");
+    Ok(())
 }
 
 fn cmd_profile(api: &OpenDota, json: bool) -> Result<()> {

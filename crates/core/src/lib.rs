@@ -8,5 +8,5 @@ pub mod error;
 pub mod models;
 
 pub use client::OpenDota;
-pub use config::Config;
+pub use config::{Config, UserProfile, UsersStore};
 pub use error::{Error, Result};

@@ -17,8 +17,8 @@ native desktop app **and** a CLI you can wire into your bar/widgets.
 ```
 
 One cached core feeds both the GUI and the CLI, so widgets refreshing every few
-minutes never hammer OpenDota. Cache lives in `~/.cache/dota-stats/`, config in
-`~/.config/dota-stats/config.toml`.
+minutes never hammer OpenDota. Cache lives in `~/.cache/dota-stats/`, saved
+profiles in `~/.config/dota-stats/users.json`.
 
 ### Supply-chain notes
 - HTTP via **`ureq`** (rustls, no OpenSSL; no tokio/hyper tree).
@@ -37,11 +37,37 @@ cargo build --release --locked
 # CLI binary: target/release/dota-stats
 ```
 
-## Config
+## Run the desktop app
 
-First run writes a template `~/.config/dota-stats/config.toml` and exits,
-asking you to set your `account_id` (Steam32 / Dota friend id). Edit the file,
-then run again. See `config.example.toml`.
+The frontend is a static folder (no dev server), so the GUI runs straight from
+cargo — no `npm`, no `tauri-cli`:
+
+```bash
+cargo run -p dota-stats-app           # quick run (debug)
+# or, after a release build:
+./target/release/dota-stats-app
+```
+
+A 1000×780 window titled **Dota 2 Stats** opens. On first launch it has no
+account yet — see [Profiles](#profiles) below.
+
+## Profiles
+
+There is **no account baked into the repo** — it ships empty. On first launch
+the app opens the **Edit IDs** editor: add your Steam32 / Dota friend id (with a
+label like "Main"), and it's saved to `~/.config/dota-stats/users.json`. Add as
+many profiles as you like and switch between them with the dropdown in the top
+bar. The file lives in your OS config dir and is never committed — the repo only
+ships the empty `users.example.json` template.
+
+From the CLI you can manage the same list:
+
+```bash
+dota-stats add 123456 Main    # save a profile (first one becomes active)
+dota-stats users              # list profiles (★ = active)
+dota-stats use 123456         # switch the active profile
+dota-stats remove 123456      # delete a profile
+```
 
 ## CLI usage
 

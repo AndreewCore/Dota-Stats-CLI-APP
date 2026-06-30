@@ -1,6 +1,0 @@
-# Copy to ~/.config/dota-stats/config.toml (created automatically on first run).
-# account_id is your Steam32 / Dota friend id. Replace the 0 below with yours.
-account_id = 0
-
-# Optional OpenDota API key — raises rate limits. Not required for light use.
-# api_key = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

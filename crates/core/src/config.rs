@@ -2,11 +2,8 @@ use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Placeholder account_id written into a freshly-created config file.
-/// The app refuses to run until it is replaced with a real
-/// Steam32 / Dota friend id.
-pub const PLACEHOLDER_ACCOUNT_ID: u64 = 0;
-
+/// Resolved runtime config for a single profile — what `OpenDota::new` consumes.
+/// Produced on demand from the active profile in [`UsersStore`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// OpenDota account_id (Steam32 / Dota friend id).
@@ -16,13 +13,28 @@ pub struct Config {
     pub api_key: Option<String>,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            account_id: PLACEHOLDER_ACCOUNT_ID,
-            api_key: None,
-        }
-    }
+/// One saved player profile shown in the UI dropdown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProfile {
+    /// Friendly label shown in the dropdown (e.g. "Main", "Smurf").
+    pub label: String,
+    /// OpenDota account_id (Steam32 / Dota friend id).
+    pub account_id: u64,
+}
+
+/// On-disk store of all saved profiles plus which one is active. Persisted as
+/// JSON at [`users_path`]. The repo ships an empty template; the real file lives
+/// in the OS config dir and is never committed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsersStore {
+    #[serde(default)]
+    pub profiles: Vec<UserProfile>,
+    /// account_id of the active profile, or `None` when empty / unselected.
+    #[serde(default)]
+    pub selected: Option<u64>,
+    /// Optional global OpenDota API key (raises rate limits). Never required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
 }
 
 /// `$XDG_CONFIG_HOME/dota-stats` or `~/.config/dota-stats`.
@@ -37,42 +49,82 @@ pub fn config_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".config").join("dota-stats"))
 }
 
-pub fn config_path() -> Result<PathBuf> {
-    Ok(config_dir()?.join("config.toml"))
+pub fn users_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("users.json"))
 }
 
-impl Config {
-    /// Load config from disk. If absent, write a template file and ask the
-    /// user to fill in their account_id. Also rejects an unset placeholder id.
-    pub fn load_or_init() -> Result<Config> {
-        let path = config_path()?;
+impl UsersStore {
+    /// Load the store from disk. A missing file is a valid empty state (the UI
+    /// prompts the user to add an id), so it is **not** an error.
+    pub fn load() -> Result<UsersStore> {
+        let path = users_path()?;
         if !path.exists() {
-            Config::default().write()?;
-            return Err(Error::Config(format!(
-                "Created a config file at {}. Set your account_id \
-                 (Steam32 / Dota friend id) and run again.",
-                path.display()
-            )));
+            return Ok(UsersStore::default());
         }
         let text = std::fs::read_to_string(&path)?;
-        let cfg: Config =
-            toml::from_str(&text).map_err(|e| Error::Config(e.to_string()))?;
-        if cfg.account_id == PLACEHOLDER_ACCOUNT_ID {
-            return Err(Error::Config(format!(
-                "account_id is not set. Edit {} and set your \
-                 Steam32 / Dota friend id.",
-                path.display()
-            )));
+        if text.trim().is_empty() {
+            return Ok(UsersStore::default());
         }
-        Ok(cfg)
+        serde_json::from_str(&text).map_err(Error::from)
     }
 
-    pub fn write(&self) -> Result<()> {
+    pub fn save(&self) -> Result<()> {
         let dir = config_dir()?;
         std::fs::create_dir_all(&dir)?;
-        let text = toml::to_string_pretty(self)
-            .map_err(|e| Error::Config(e.to_string()))?;
-        std::fs::write(config_path()?, text)?;
+        let text = serde_json::to_string_pretty(self).map_err(Error::from)?;
+        std::fs::write(users_path()?, text)?;
         Ok(())
+    }
+
+    /// Add a profile (or update the label of an existing one with the same id).
+    /// The first profile added becomes the selected one. `account_id` must be
+    /// non-zero. A blank label defaults to `account {id}`.
+    pub fn add(&mut self, label: &str, account_id: u64) -> Result<()> {
+        if account_id == 0 {
+            return Err(Error::Config("account_id must be a non-zero number".into()));
+        }
+        let label = if label.trim().is_empty() {
+            format!("account {account_id}")
+        } else {
+            label.trim().to_string()
+        };
+        match self.profiles.iter_mut().find(|p| p.account_id == account_id) {
+            Some(p) => p.label = label,
+            None => self.profiles.push(UserProfile { label, account_id }),
+        }
+        if self.selected.is_none() {
+            self.selected = Some(account_id);
+        }
+        Ok(())
+    }
+
+    /// Remove a profile. If it was the selected one, repoint `selected` to the
+    /// first remaining profile (or `None` when the list becomes empty).
+    pub fn remove(&mut self, account_id: u64) {
+        self.profiles.retain(|p| p.account_id != account_id);
+        if self.selected == Some(account_id) {
+            self.selected = self.profiles.first().map(|p| p.account_id);
+        }
+    }
+
+    /// Select a profile by id. No-op (error) if the id isn't in the list.
+    pub fn set_selected(&mut self, account_id: u64) -> Result<()> {
+        if self.profiles.iter().any(|p| p.account_id == account_id) {
+            self.selected = Some(account_id);
+            Ok(())
+        } else {
+            Err(Error::Config(format!("no profile with account_id {account_id}")))
+        }
+    }
+
+    /// Resolve the active profile into a [`Config`] for `OpenDota::new`.
+    pub fn active_config(&self) -> Result<Config> {
+        let id = self
+            .selected
+            .ok_or_else(|| Error::Config("No profile selected — add a Dota ID".into()))?;
+        Ok(Config {
+            account_id: id,
+            api_key: self.api_key.clone(),
+        })
     }
 }

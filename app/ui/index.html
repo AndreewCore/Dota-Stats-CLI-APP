@@ -165,6 +165,23 @@
 
     .footer { margin-top: 22px; color: var(--muted); font-size: 12px; text-align: center; }
 
+    /* ---- user (profile) selector ---- */
+    .userselect { background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+                  padding: 9px 13px; border-radius: 8px; font-size: 13px; cursor: pointer;
+                  max-width: 180px; transition: border-color .12s, background .12s; }
+    .userselect:hover { border-color: var(--red); background: var(--panel-3); }
+    .userselect:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 2px rgba(214,61,46,.18); }
+    #emptyAdd { margin-left: 10px; }
+
+    /* ---- IDs editor ---- */
+    .addform { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .addform .search { width: auto; flex: 1; min-width: 140px; }
+    .ulist { display: flex; flex-direction: column; gap: 8px; }
+    .urow { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 12px;
+            background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+    .urow .ulabel { font-weight: 600; }
+    .urow .uid { font-variant-numeric: tabular-nums; font-size: 13px; }
+
     /* ---- modal ---- */
     #overlay { position: fixed; inset: 0; background: rgba(6,9,12,.72);
                display: none; align-items: flex-start; justify-content: center;
@@ -216,6 +233,8 @@
       <div><h1>Dota 2 Stats</h1><div class="sub">via OpenDota · cached locally</div></div>
     </div>
     <div class="controls">
+      <select id="userSelect" class="userselect" title="Active profile"></select>
+      <button id="editUsers" title="Add or remove Dota IDs">⚙ Edit IDs</button>
       <label class="switch" id="turboSwitch" title="Include Turbo matches in all stats">
         <input type="checkbox" id="turbo" />
         <span class="track"></span>
@@ -290,6 +309,8 @@
     let heroIndex = [];
     // Active hero filter for the Recent matches table (null = all heroes).
     let recentHeroFilter = null;
+    // account_id of the active profile (null = none configured yet).
+    let currentSelected = null;
 
     /* ---- tiny inline SVG charting (no deps) ---- */
     const CW = 820, CH = 132, CP = 22;
@@ -641,6 +662,88 @@
       </div>`;
     }
 
+    /* ---------------- profiles (user IDs) ---------------- */
+    const STAT_IDS = ['winrate', 'performance', 'heroes', 'breakdowns', 'topwr', 'recent'];
+
+    function populateUserSelect(payload) {
+      const sel = $('userSelect');
+      sel.innerHTML = payload.profiles.map(p =>
+        `<option value="${p.account_id}">${esc(p.label)}</option>`).join('');
+      if (payload.selected != null) sel.value = String(payload.selected);
+      sel.style.display = payload.profiles.length ? '' : 'none';
+    }
+
+    // No profile configured: prompt to add one instead of firing failing stats.
+    function showEmptyState() {
+      $('profile').innerHTML = `<div>
+        <div class="pname">No profiles yet</div>
+        <div class="psub">Add your Steam32 / Dota friend id to get started.
+          <button id="emptyAdd">+ Add a Dota ID</button></div></div>`;
+      STAT_IDS.forEach(id => $(id).innerHTML = '<p class="muted">No profile selected.</p>');
+    }
+
+    // Reflect a fresh users payload everywhere; reload stats if the active id moved.
+    function applyUsers(payload) {
+      populateUserSelect(payload);
+      if (payload.selected !== currentSelected) {
+        currentSelected = payload.selected;
+        if (currentSelected != null) loadAll(); else showEmptyState();
+      }
+    }
+
+    function openUsersEditor() { pushView(renderUsersEditor); }
+
+    async function renderUsersEditor() {
+      const data = await invoke('list_users');
+      const rows = data.profiles.map(p => `
+        <div class="urow">
+          <span class="ulabel">${esc(p.label)}</span>
+          <span class="uid muted">${p.account_id}</span>
+          <button class="iconbtn" data-remove="${p.account_id}" title="Remove">✕</button>
+        </div>`).join('') || '<p class="muted">No profiles saved yet.</p>';
+      const head = mHead(
+        `<div class="big" style="display:flex;align-items:center;justify-content:center;font-size:22px">⚙</div>`,
+        'Edit Dota IDs',
+        'Profiles shown in the dropdown — stored locally, never committed');
+      return head + `<div class="mbody">
+        <div class="teamtitle">Add a profile</div>
+        <div class="addform">
+          <input id="userLabel" class="search" placeholder="Label (e.g. Main)" autocomplete="off" />
+          <input id="userAccountId" class="search" placeholder="account_id (Steam32)" inputmode="numeric" autocomplete="off" />
+          <button id="userAddBtn">+ Add</button>
+        </div>
+        <p class="err" id="userAddErr" style="display:none;margin-top:8px"></p>
+        <div class="teamtitle" style="margin-top:16px">Saved profiles</div>
+        <div class="ulist">${rows}</div>
+      </div>`;
+    }
+
+    async function submitAddUser() {
+      const labelEl = $('userLabel'), idEl = $('userAccountId'), errEl = $('userAddErr');
+      const account_id = parseInt((idEl.value || '').trim(), 10);
+      if (!Number.isInteger(account_id) || account_id <= 0) {
+        errEl.textContent = 'Enter a valid numeric account_id (Steam32 / Dota friend id).';
+        errEl.style.display = 'block';
+        idEl.classList.add('miss'); setTimeout(() => idEl.classList.remove('miss'), 800);
+        return;
+      }
+      try {
+        const payload = await invoke('add_user', { label: labelEl.value.trim(), accountId: account_id });
+        applyUsers(payload);
+        await renderTop();
+      } catch (e) {
+        errEl.textContent = String(e); errEl.style.display = 'block';
+      }
+    }
+
+    async function doRemoveUser(account_id) {
+      try {
+        const payload = await invoke('remove_user', { accountId: account_id });
+        applyUsers(payload);
+        await renderTop();
+      } catch (e) { /* keep the editor open; nothing else to do */ }
+    }
+
     /* ---------------- events ---------------- */
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) return closeModal();
@@ -753,7 +856,45 @@
       loadStats();
     });
 
-    loadAll();
+    // Profile selector + IDs editor wiring.
+    $('userSelect').addEventListener('change', async (e) => {
+      const account_id = Number(e.target.value);
+      try {
+        await invoke('select_user', { accountId: account_id });
+        currentSelected = account_id;
+        loadAll();
+      } catch (err) { /* selection unchanged */ }
+    });
+    $('editUsers').addEventListener('click', openUsersEditor);
+    $('profile').addEventListener('click', (e) => {
+      if (e.target.id === 'emptyAdd') openUsersEditor();
+    });
+    // Editor actions are delegated on the overlay (inputs re-render on each change).
+    overlay.addEventListener('click', (e) => {
+      if (e.target.closest('#userAddBtn')) return submitAddUser();
+      const rm = e.target.closest('[data-remove]');
+      if (rm) return doRemoveUser(Number(rm.dataset.remove));
+    });
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.target.id === 'userAccountId' || e.target.id === 'userLabel')) {
+        e.preventDefault(); submitAddUser();
+      }
+    });
+
+    // Startup: load profiles first; show the dashboard only once one is selected.
+    async function init() {
+      try {
+        const payload = await invoke('list_users');
+        populateUserSelect(payload);
+        currentSelected = payload.selected;
+        if (currentSelected != null) { loadAll(); }
+        else { showEmptyState(); openUsersEditor(); }
+      } catch (e) {
+        $('profile').innerHTML = `<p class="err">profiles: ${esc(e)}</p>`;
+      }
+    }
+
+    init();
   </script>
 </body>
 </html>

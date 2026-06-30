@@ -1,8 +1,9 @@
 /target
 **/*.rs.bk
 
-# Local-only config (never commit a real account_id / api_key)
-/config.toml
+# Real profile data lives in the OS config dir, never in the repo:
+#   ~/.config/dota-stats/users.json   (account_ids / api_key — never commit)
+# The repo only ships the empty users.example.json template.
 
 # Local Claude Code settings
 .claude/settings.local.json

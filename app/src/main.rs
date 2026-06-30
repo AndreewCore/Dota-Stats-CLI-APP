@@ -6,12 +6,58 @@
 //! Network/cache work runs on a blocking thread so the UI never freezes.
 
 use dota_stats_core::models::{game_mode_name, lane_role_name, medal_name, medal_stars};
-use dota_stats_core::{Config, OpenDota};
+use dota_stats_core::{OpenDota, UsersStore};
 use serde_json::{json, Value};
 
 fn client() -> Result<OpenDota, String> {
-    let cfg = Config::load_or_init().map_err(|e| e.to_string())?;
+    let cfg = UsersStore::load()
+        .and_then(|s| s.active_config())
+        .map_err(|e| e.to_string())?;
     Ok(OpenDota::new(&cfg))
+}
+
+/// Shape the store into the `{ profiles, selected }` payload the UI expects.
+fn users_payload(store: &UsersStore) -> Value {
+    let profiles: Vec<Value> = store
+        .profiles
+        .iter()
+        .map(|p| json!({ "label": p.label, "account_id": p.account_id }))
+        .collect();
+    json!({ "profiles": profiles, "selected": store.selected })
+}
+
+/// List saved profiles and which one is active.
+#[tauri::command]
+fn list_users() -> Result<Value, String> {
+    let store = UsersStore::load().map_err(|e| e.to_string())?;
+    Ok(users_payload(&store))
+}
+
+/// Add (or relabel) a profile, then return the refreshed list.
+#[tauri::command]
+fn add_user(label: String, account_id: u64) -> Result<Value, String> {
+    let mut store = UsersStore::load().map_err(|e| e.to_string())?;
+    store.add(&label, account_id).map_err(|e| e.to_string())?;
+    store.save().map_err(|e| e.to_string())?;
+    Ok(users_payload(&store))
+}
+
+/// Remove a profile, then return the refreshed list.
+#[tauri::command]
+fn remove_user(account_id: u64) -> Result<Value, String> {
+    let mut store = UsersStore::load().map_err(|e| e.to_string())?;
+    store.remove(account_id);
+    store.save().map_err(|e| e.to_string())?;
+    Ok(users_payload(&store))
+}
+
+/// Set the active profile.
+#[tauri::command]
+fn select_user(account_id: u64) -> Result<(), String> {
+    let mut store = UsersStore::load().map_err(|e| e.to_string())?;
+    store.set_selected(account_id).map_err(|e| e.to_string())?;
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -345,6 +391,10 @@ async fn get_breakdowns(include_turbo: Option<bool>) -> Result<Value, String> {
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            list_users,
+            add_user,
+            remove_user,
+            select_user,
             get_profile,
             get_winrate,
             get_heroes,
