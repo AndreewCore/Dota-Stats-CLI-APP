@@ -20,6 +20,41 @@ One cached core feeds both the GUI and the CLI, so widgets refreshing every few
 minutes never hammer OpenDota. Cache lives in `~/.cache/dota-stats/`, saved
 profiles in `~/.config/dota-stats/users.json`.
 
+### When a real API request is made
+
+The app does **not** call OpenDota on every click. Every request goes through
+the on-disk TTL cache in `~/.cache/dota-stats/`: a network `GET` to
+`api.opendota.com` happens **only on a cache miss** — i.e. the first time an
+endpoint is needed, or after its cached entry has expired. A fresh cache entry
+is served locally with no network traffic.
+
+Cache entries are keyed per `account_id` (and separately for Turbo vs. core
+stats), so navigating tabs, opening hero/match modals, and re-rendering views
+reuse the cache and hit the network zero times while entries are still fresh.
+
+Per-endpoint TTLs:
+
+| Data | TTL |
+|------|-----|
+| Profile / MMR / rank | 6 hours |
+| Win-loss, totals, counts (breakdowns) | 30 min |
+| Heroes | 1 hour |
+| Recent / hero matches | 10 min |
+| Match detail + hero constants | ~7 days |
+
+A real request set is therefore triggered by:
+- **First load** after the cache is cold — fans out to the ~7–8 endpoints the
+  dashboard needs (only those whose entries are missing/expired).
+- **A cache entry aging past its TTL**, on the next view that needs it.
+- **Switching profiles** — a different `account_id` means new cache keys, so
+  that player's data is fetched.
+- **Toggling Turbo** — Turbo and core stats use separate cache keys, so the
+  first toggle refetches the affected endpoints.
+
+> **Note:** the **↻ Refresh** button re-reads through the cache; it does *not*
+> bypass it, so it only produces network calls for entries whose TTL has already
+> expired. It will not force fresh data while entries are still within their TTL.
+
 ### Supply-chain notes
 - HTTP via **`ureq`** (rustls, no OpenSSL; no tokio/hyper tree).
 - CLI arg parsing is hand-rolled — no `clap`.
