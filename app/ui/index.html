@@ -20,6 +20,10 @@
       --green: #46b95f;
       --radiant: #4fae5a;
       --dire: #d6533f;
+      /* compare-to (second user) accent — cool to contrast the warm main user */
+      --blue: #3f7fd6;
+      --blue-soft: #5a9bef;
+      --purple: #8a5cd6;
     }
     * { box-sizing: border-box; }
     html { color-scheme: dark; }
@@ -71,7 +75,7 @@
     .switch.on { color: var(--text); }
 
     /* ---- profile ---- */
-    .profile { display: flex; align-items: center; gap: 18px; position: relative;
+    .profile { display: flex; align-items: center; gap: 18px; position: relative; flex-wrap: wrap;
                background: linear-gradient(120deg, var(--panel-2), var(--panel));
                border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px;
                margin-bottom: 18px; overflow: hidden; }
@@ -224,6 +228,34 @@
     .ov { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 6px; }
     .ov .wheel { text-align: center; flex: 0 0 auto; }
     .ov .grow { flex: 1; min-width: 280px; }
+
+    /* ---- profile-card controls (profile picker + compare + edit) ---- */
+    #profileMain { display: flex; align-items: center; gap: 18px; }
+    .pcontrols { margin-left: auto; display: flex; align-items: center; gap: 10px;
+                 flex-wrap: wrap; justify-content: flex-end; }
+    .userselect.compare:hover { border-color: var(--blue); }
+    .userselect.compare:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px rgba(63,127,214,.20); }
+    .cmp-legend { display: none; align-items: center; gap: 8px; font-size: 12px; color: var(--muted);
+                  width: 100%; justify-content: flex-end; }
+    .cmp-legend.on { display: flex; }
+    .cmp-legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .dot.warm { background: linear-gradient(135deg, var(--red), var(--gold)); }
+    .dot.cool { background: linear-gradient(135deg, var(--blue), var(--purple)); }
+
+    /* ---- compare-mode accents (cool = second user) ---- */
+    .hero.cmp { padding-top: 2px; padding-bottom: 10px; cursor: default; }
+    .hero.cmp:hover { background: transparent; }
+    .hero.cmp .rank { color: var(--blue-soft); }
+    .meter > span.cmp { background: linear-gradient(90deg, var(--blue), var(--purple)); }
+    .hero .pct.cmp { color: var(--blue-soft); }
+    .bar.cmp span:first-child { color: var(--muted); }
+    .bar .fill.cmp { background: linear-gradient(90deg, var(--blue), var(--blue-soft)); }
+    .avg .num.main-cmp { color: var(--gold); }
+    .avg .num.cmp { color: var(--blue-soft); font-size: 15px; margin-top: 3px; }
+    .wr-compare { display: flex; flex-direction: column; gap: 16px; }
+    .wr-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .wr-row .who { display: flex; align-items: center; gap: 7px; font-size: 12px;
+                   min-width: 96px; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -233,8 +265,6 @@
       <div><h1>Dota 2 Stats</h1><div class="sub">via OpenDota · cached locally</div></div>
     </div>
     <div class="controls">
-      <select id="userSelect" class="userselect" title="Active profile"></select>
-      <button id="editUsers" title="Add or remove Dota IDs">⚙ Edit IDs</button>
       <label class="switch" id="turboSwitch" title="Include Turbo matches in all stats">
         <input type="checkbox" id="turbo" />
         <span class="track"></span>
@@ -244,7 +274,15 @@
     </div>
   </div>
 
-  <div class="profile" id="profile"><p class="psub">Loading profile…</p></div>
+  <div class="profile" id="profile">
+    <div id="profileMain"><p class="psub">Loading profile…</p></div>
+    <div class="pcontrols">
+      <select id="userSelect" class="userselect" title="Active profile"></select>
+      <select id="compareSelect" class="userselect compare" title="Compare with another saved profile"></select>
+      <button id="editUsers" title="Add or remove Dota IDs">⚙ Edit IDs</button>
+      <div id="compareLegend" class="cmp-legend"></div>
+    </div>
+  </div>
 
   <div class="grid">
     <div class="card"><h2>Win / Loss</h2><div id="winrate"><p class="muted">Loading…</p></div></div>
@@ -311,6 +349,12 @@
     let recentHeroFilter = null;
     // account_id of the active profile (null = none configured yet).
     let currentSelected = null;
+    // account_id of the compare-to profile (null = comparison off), and its label.
+    let compareSelected = null;
+    let compareLabel = '';
+    // Last users payload we rendered — lets the profile dropdown rebuild the
+    // compare list (which must exclude the active profile) without a refetch.
+    let lastUsers = { profiles: [], selected: null };
 
     /* ---- tiny inline SVG charting (no deps) ---- */
     const CW = 820, CH = 132, CP = 22;
@@ -340,14 +384,21 @@
         <text x="${x.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" fill="${color}"
           font-size="13" font-weight="700">${fmt(values[mi])}</text>`;
     }
-    // Reusable winrate wheel (donut).
-    function donutSVG(pct, cap, size) {
+    // Reusable winrate wheel (donut). scheme 'warm' (default, main user, red→gold)
+    // or 'cool' (compare user, blue→purple). Each call gets a unique gradient id.
+    let _donutSeq = 0;
+    function donutSVG(pct, cap, size, scheme) {
       size = size || 124;
       const c = size / 2, r = c - 10, C = 2 * Math.PI * r;
       const dash = (pct / 100 * C).toFixed(1);
+      const gid = 'wrg' + (++_donutSeq);
+      const stops = scheme === 'cool'
+        ? '<stop offset="0%" stop-color="var(--blue)"/><stop offset="100%" stop-color="var(--purple)"/>'
+        : '<stop offset="0%" stop-color="var(--red)"/><stop offset="100%" stop-color="var(--gold)"/>';
       return `<svg class="donut" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1">${stops}</linearGradient></defs>
         <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--panel-3)" stroke-width="11"/>
-        <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--green)" stroke-width="11"
+        <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="url(#${gid})" stroke-width="11"
           stroke-linecap="round" stroke-dasharray="${dash} ${C.toFixed(1)}" transform="rotate(-90 ${c} ${c})"/>
         <text class="val" x="${c}" y="${c - 1}" text-anchor="middle">${r1(pct)}%</text>
         <text class="cap" x="${c}" y="${c + 14}" text-anchor="middle">${cap}</text>
@@ -396,98 +447,202 @@
           ? (p.leaderboard_rank ? `Immortal #${p.leaderboard_rank}` : 'Immortal')
           : `${p.medal} ${p.stars}`;
         const mmr = p.mmr_estimate != null ? `${p.mmr_estimate} MMR` : 'MMR n/a';
-        $('profile').innerHTML = `
+        $('profileMain').innerHTML = `
           ${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<div class="avatar"></div>`}
           <div>
             <div class="pname">${esc(p.name)}</div>
             <div class="psub"><span class="badge">${esc(rank)}</span><span>${esc(mmr)}</span></div>
           </div>`;
-      } catch (e) { $('profile').innerHTML = `<p class="err">profile: ${esc(e)}</p>`; }
+      } catch (e) { $('profileMain').innerHTML = `<p class="err">profile: ${esc(e)}</p>`; }
+    }
+
+    // Text of the active profile in the dropdown — used for compare legends.
+    function mainLabelText() {
+      const o = $('userSelect').selectedOptions[0];
+      return o ? o.text : 'You';
+    }
+    // Fetch a command for the compare user, or null when comparison is off.
+    function fetchCompare(cmd, args) {
+      return compareSelected != null
+        ? invoke(cmd, Object.assign({ accountId: compareSelected }, args))
+        : Promise.resolve(null);
     }
 
     async function loadWinrate() {
       try {
-        const w = await invoke('get_winrate', { includeTurbo });
-        $('winrate').innerHTML = `
-          <div class="wr-wrap">
-            ${donutSVG(w.winrate, 'WIN RATE', 124)}
-            <div class="wr-stats">
-              <div><div class="num" style="color:var(--green)">${w.win}</div><div class="lbl">wins</div></div>
-              <div><div class="num" style="color:var(--red-soft)">${w.lose}</div><div class="lbl">losses</div></div>
-              <div><div class="num">${w.total}</div><div class="lbl">games</div></div>
-            </div>
-          </div>`;
+        const [w, wc] = await Promise.all([
+          invoke('get_winrate', { includeTurbo }),
+          fetchCompare('get_winrate', { includeTurbo }),
+        ]);
+        const wrStats = (x) => `<div class="wr-stats">
+          <div><div class="num">${x.win}</div><div class="lbl">wins</div></div>
+          <div><div class="num">${x.lose}</div><div class="lbl">losses</div></div>
+          <div><div class="num">${x.total}</div><div class="lbl">games</div></div>
+        </div>`;
+        if (!wc) {
+          $('winrate').innerHTML = `
+            <div class="wr-wrap">
+              ${donutSVG(w.winrate, 'WIN RATE', 124)}
+              <div class="wr-stats">
+                <div><div class="num" style="color:var(--green)">${w.win}</div><div class="lbl">wins</div></div>
+                <div><div class="num" style="color:var(--red-soft)">${w.lose}</div><div class="lbl">losses</div></div>
+                <div><div class="num">${w.total}</div><div class="lbl">games</div></div>
+              </div>
+            </div>`;
+          return;
+        }
+        const row = (x, cmp, label) => `<div class="wr-row">
+          <div class="who"><span class="dot ${cmp ? 'cool' : 'warm'}"></span>${esc(label)}</div>
+          ${donutSVG(x.winrate, 'WIN RATE', 108, cmp ? 'cool' : 'warm')}
+          ${wrStats(x)}
+        </div>`;
+        $('winrate').innerHTML = `<div class="wr-compare">
+          ${row(w, false, mainLabelText())}
+          ${row(wc, true, compareLabel)}
+        </div>`;
       } catch (e) { $('winrate').innerHTML = `<p class="err">winrate: ${esc(e)}</p>`; }
+    }
+
+    // Ordered [label, value] tiles for the Career averages card.
+    function perfTiles(p) {
+      return [
+        ['KDA', r1(p.kda)],
+        ['K / D / A', `${r1(p.kills)}/${r1(p.deaths)}/${r1(p.assists)}`],
+        ['GPM', r0(p.gpm)],
+        ['XPM', r0(p.xpm)],
+        ['Last hits', r0(p.last_hits)],
+        ['Denies', r0(p.denies)],
+        ['Hero dmg', kfmt(p.hero_damage)],
+        ['Avg length', r0(p.duration / 60) + 'm'],
+      ];
     }
 
     async function loadPerformance() {
       try {
-        const p = await invoke('get_performance', { includeTurbo });
-        const tiles = [
-          ['KDA', r1(p.kda)],
-          ['K / D / A', `${r1(p.kills)}/${r1(p.deaths)}/${r1(p.assists)}`],
-          ['GPM', r0(p.gpm)],
-          ['XPM', r0(p.xpm)],
-          ['Last hits', r0(p.last_hits)],
-          ['Denies', r0(p.denies)],
-          ['Hero dmg', kfmt(p.hero_damage)],
-          ['Avg length', r0(p.duration / 60) + 'm'],
-        ];
-        $('performance').innerHTML = `<div class="avgs">${tiles.map(([l, v]) =>
-          `<div class="avg"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
+        const [p, pc] = await Promise.all([
+          invoke('get_performance', { includeTurbo }),
+          fetchCompare('get_performance', { includeTurbo }),
+        ]);
+        const tiles = perfTiles(p);
+        const cmp = pc ? perfTiles(pc) : null;
+        $('performance').innerHTML = `<div class="avgs">${tiles.map(([l, v], i) =>
+          `<div class="avg">
+            <div class="num${cmp ? ' main-cmp' : ''}">${v}</div>
+            ${cmp ? `<div class="num cmp">${cmp[i][1]}</div>` : ''}
+            <div class="lbl">${l}</div>
+          </div>`).join('')}</div>`;
       } catch (e) { $('performance').innerHTML = `<p class="err">averages: ${esc(e)}</p>`; }
+    }
+
+    // One hero row. `cmp` rows use the cool palette and are display-only (the
+    // hero modal always uses the active profile); main rows stay clickable.
+    function heroRow(h, rank, widthPct, cmp) {
+      const rankCell = cmp
+        ? `<span class="rank">•</span>`
+        : `<span class="rank">${rank}</span>`;
+      const attrs = cmp ? '' : ` data-hero="${h.hero_id}" data-icon="${esc(h.icon || '')}"`;
+      const chev = cmp ? '' : ' <span class="chev">›</span>';
+      return `<div class="hero${cmp ? ' cmp' : ''}"${attrs}>
+        ${rankCell}
+        ${heroIcon(h.icon)}
+        <div>
+          <div>${esc(h.hero)} <span class="muted">· ${h.games} games</span></div>
+          <div class="meter"><span class="${cmp ? 'cmp' : ''}" style="width:${widthPct.toFixed(0)}%"></span></div>
+        </div>
+        <span class="pct${cmp ? ' cmp' : ''}">${r0(h.winrate)}%${chev}</span>
+      </div>`;
+    }
+    // Interleave two ranked hero lists by position: main #1, compare #1, main #2…
+    // `width` maps a hero to its meter width (games-relative or winrate).
+    function heroList(main, cmp, width) {
+      if (!cmp) return main.map((h, i) => heroRow(h, i + 1, width(h), false)).join('');
+      let out = '';
+      const len = Math.max(main.length, cmp.length);
+      for (let i = 0; i < len; i++) {
+        if (main[i]) out += heroRow(main[i], i + 1, width(main[i]), false);
+        if (cmp[i]) out += heroRow(cmp[i], i + 1, width(cmp[i]), true);
+      }
+      return out;
     }
 
     async function loadHeroes() {
       try {
-        const hs = await invoke('get_heroes', { n: 8, includeTurbo });
-        const max = Math.max(1, ...hs.map(h => h.games));
-        $('heroes').innerHTML = hs.map((h, i) => `
-          <div class="hero" data-hero="${h.hero_id}" data-icon="${esc(h.icon || '')}">
-            <span class="rank">${i + 1}</span>
-            ${heroIcon(h.icon)}
-            <div>
-              <div>${esc(h.hero)} <span class="muted">· ${h.games} games</span></div>
-              <div class="meter"><span style="width:${(h.games / max * 100).toFixed(0)}%"></span></div>
-            </div>
-            <span class="pct">${r0(h.winrate)}% <span class="chev">›</span></span>
-          </div>`).join('') || '<p class="muted">No hero data.</p>';
+        const [hs, hc] = await Promise.all([
+          invoke('get_heroes', { n: 8, includeTurbo }),
+          fetchCompare('get_heroes', { n: 8, includeTurbo }),
+        ]);
+        const max = Math.max(1, ...hs.map(h => h.games), ...(hc ? hc.map(h => h.games) : []));
+        const width = (h) => h.games / max * 100;
+        $('heroes').innerHTML = heroList(hs, hc, width) || '<p class="muted">No hero data.</p>';
       } catch (e) { $('heroes').innerHTML = `<p class="err">heroes: ${esc(e)}</p>`; }
     }
 
+    function barRow(r, max, cmp) {
+      return `<div class="bar${cmp ? ' cmp' : ''}">
+        <span>${esc(r.label)}</span>
+        <div class="track2"><div class="fill${cmp ? ' cmp' : ''}" style="width:${(r.games / max * 100).toFixed(0)}%"></div></div>
+        <span class="meta">${r0(r.winrate)}% · ${r.games}g</span>
+      </div>`;
+    }
+    function barMissing(label, cmp) {
+      return `<div class="bar${cmp ? ' cmp' : ''}">
+        <span>${esc(label)}</span>
+        <div class="track2"><div class="fill${cmp ? ' cmp' : ''}" style="width:0%"></div></div>
+        <span class="meta muted">— · 0g</span>
+      </div>`;
+    }
     function barRows(rows) {
       const max = Math.max(1, ...rows.map(r => r.games));
-      return rows.map(r => `
-        <div class="bar">
-          <span>${esc(r.label)}</span>
-          <div class="track2"><div class="fill" style="width:${(r.games / max * 100).toFixed(0)}%"></div></div>
-          <span class="meta">${r0(r.winrate)}% · ${r.games}g</span>
-        </div>`).join('');
+      return rows.map(r => barRow(r, max, false)).join('');
+    }
+    // Compare bars, aligned by label: for each label show the main bar then the
+    // compare bar (interleaved), e.g. Safelane(main), Safelane(compare), Offlane…
+    function barRowsCompare(main, cmp) {
+      const byLabel = new Map(cmp.map(r => [r.label, r]));
+      const max = Math.max(1, ...main.map(r => r.games), ...cmp.map(r => r.games));
+      const seen = new Set();
+      let out = '';
+      for (const r of main) {
+        out += barRow(r, max, false);
+        const cr = byLabel.get(r.label);
+        if (cr) { out += barRow(cr, max, true); seen.add(r.label); }
+        else out += barMissing(r.label, true);
+      }
+      // Labels the compare user has but the main user doesn't.
+      for (const cr of cmp) if (!seen.has(cr.label)) {
+        out += barMissing(cr.label, false);
+        out += barRow(cr, max, true);
+      }
+      return out;
+    }
+    function bkGroup(title, main, cmp) {
+      if (!main.length && !(cmp && cmp.length)) return '';
+      const body = cmp ? barRowsCompare(main, cmp) : barRows(main);
+      return `<div class="bk-group"><div class="bk-title">${title}</div>${body}</div>`;
     }
 
     async function loadBreakdowns() {
       try {
-        const b = await invoke('get_breakdowns', { includeTurbo });
-        const role = b.roles.length ? `<div class="bk-group"><div class="bk-title">By lane role</div>${barRows(b.roles)}</div>` : '';
-        const mode = b.modes.length ? `<div class="bk-group"><div class="bk-title">By game mode</div>${barRows(b.modes)}</div>` : '';
+        const [b, bc] = await Promise.all([
+          invoke('get_breakdowns', { includeTurbo }),
+          fetchCompare('get_breakdowns', { includeTurbo }),
+        ]);
+        const role = bkGroup('By lane role', b.roles, bc && bc.roles);
+        const mode = bkGroup('By game mode', b.modes, bc && bc.modes);
         $('breakdowns').innerHTML = (role + mode) || '<p class="muted">No breakdown data.</p>';
       } catch (e) { $('breakdowns').innerHTML = `<p class="err">breakdowns: ${esc(e)}</p>`; }
     }
 
     async function loadTopWinrate() {
       try {
-        const d = await invoke('get_top_winrate', { n: 6, minGames: 5, includeTurbo });
+        const [d, dc] = await Promise.all([
+          invoke('get_top_winrate', { n: 6, minGames: 5, includeTurbo }),
+          fetchCompare('get_top_winrate', { n: 6, minGames: 5, includeTurbo }),
+        ]);
         $('topwrTitle').innerHTML = `Highest win rate <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">(≥${d.min_games} games)</span>`;
-        $('topwr').innerHTML = d.heroes.map((h, i) => `
-          <div class="hero" data-hero="${h.hero_id}">
-            <span class="rank">${i + 1}</span>
-            ${heroIcon(h.icon)}
-            <div>
-              <div>${esc(h.hero)} <span class="muted">· ${h.games} games</span></div>
-              <div class="meter"><span style="width:${r0(h.winrate)}%"></span></div>
-            </div>
-            <span class="pct">${r0(h.winrate)}% <span class="chev">›</span></span>
-          </div>`).join('') || '<p class="muted">Not enough games yet.</p>';
+        const width = (h) => h.winrate;
+        $('topwr').innerHTML = heroList(d.heroes, dc && dc.heroes, width)
+          || '<p class="muted">Not enough games yet.</p>';
       } catch (e) { $('topwr').innerHTML = `<p class="err">top winrate: ${esc(e)}</p>`; }
     }
 
@@ -666,16 +821,41 @@
     const STAT_IDS = ['winrate', 'performance', 'heroes', 'breakdowns', 'topwr', 'recent'];
 
     function populateUserSelect(payload) {
+      lastUsers = payload;
       const sel = $('userSelect');
       sel.innerHTML = payload.profiles.map(p =>
         `<option value="${p.account_id}">${esc(p.label)}</option>`).join('');
       if (payload.selected != null) sel.value = String(payload.selected);
       sel.style.display = payload.profiles.length ? '' : 'none';
+      populateCompareSelect(payload);
+    }
+
+    // Compare dropdown lists every saved profile except the active one. Hidden
+    // when there's no second profile to compare against.
+    function populateCompareSelect(payload) {
+      const sel = $('compareSelect');
+      const others = payload.profiles.filter(p => p.account_id !== payload.selected);
+      sel.innerHTML = `<option value="">Compare: none</option>` +
+        others.map(p => `<option value="${p.account_id}">vs ${esc(p.label)}</option>`).join('');
+      // Keep the current comparison if it's still a valid non-active profile.
+      const keep = others.find(p => p.account_id === compareSelected);
+      if (keep) { sel.value = String(compareSelected); compareLabel = keep.label; }
+      else { compareSelected = null; compareLabel = ''; sel.value = ''; }
+      sel.style.display = others.length ? '' : 'none';
+      updateCompareLegend();
+    }
+
+    function updateCompareLegend() {
+      const el = $('compareLegend');
+      if (compareSelected == null) { el.classList.remove('on'); el.innerHTML = ''; return; }
+      el.classList.add('on');
+      el.innerHTML = `<span class="dot warm"></span>${esc(mainLabelText())} <span class="muted">(you)</span>
+        <span class="dot cool"></span>${esc(compareLabel)}`;
     }
 
     // No profile configured: prompt to add one instead of firing failing stats.
     function showEmptyState() {
-      $('profile').innerHTML = `<div>
+      $('profileMain').innerHTML = `<div>
         <div class="pname">No profiles yet</div>
         <div class="psub">Add your Steam32 / Dota friend id to get started.
           <button id="emptyAdd">+ Add a Dota ID</button></div></div>`;
@@ -862,8 +1042,19 @@
       try {
         await invoke('select_user', { accountId: account_id });
         currentSelected = account_id;
+        lastUsers.selected = account_id;
+        // Rebuild the compare list so it can't offer the now-active profile.
+        populateCompareSelect(lastUsers);
         loadAll();
       } catch (err) { /* selection unchanged */ }
+    });
+    // Compare-to selector: pick a second profile (or "none" to turn it off).
+    $('compareSelect').addEventListener('change', (e) => {
+      const v = e.target.value;
+      compareSelected = v ? Number(v) : null;
+      compareLabel = compareSelected != null ? e.target.selectedOptions[0].text.replace(/^vs\s+/, '') : '';
+      updateCompareLegend();
+      loadStats();
     });
     $('editUsers').addEventListener('click', openUsersEditor);
     $('profile').addEventListener('click', (e) => {
@@ -890,7 +1081,7 @@
         if (currentSelected != null) { loadAll(); }
         else { showEmptyState(); openUsersEditor(); }
       } catch (e) {
-        $('profile').innerHTML = `<p class="err">profiles: ${esc(e)}</p>`;
+        $('profileMain').innerHTML = `<p class="err">profiles: ${esc(e)}</p>`;
       }
     }
 
