@@ -230,7 +230,16 @@
     .ov .grow { flex: 1; min-width: 280px; }
 
     /* ---- profile-card controls (profile picker + compare + edit) ---- */
-    #profileMain { display: flex; align-items: center; gap: 18px; }
+    #profileMain { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+    .pident { display: flex; align-items: center; gap: 14px; }
+    /* Both identities share the row while comparing, so trim them to fit. */
+    #profileMain.comparing .avatar { width: 54px; height: 54px; }
+    #profileMain.comparing .pname { font-size: 19px; }
+    #profileMain.comparing .pident:not(.cmp) .avatar { box-shadow: 0 0 0 2px rgba(201,162,75,.65); }
+    #profileMain.comparing .pident.cmp .avatar { box-shadow: 0 0 0 2px rgba(90,155,239,.65); }
+    .pident.cmp .pname { color: var(--blue-soft); }
+    .pvs { color: var(--muted); font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+           padding: 0 2px; }
     .pcontrols { margin-left: auto; display: flex; align-items: center; gap: 10px;
                  flex-wrap: wrap; justify-content: flex-end; }
     .userselect.compare:hover { border-color: var(--blue); }
@@ -256,6 +265,17 @@
     .wr-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
     .wr-row .who { display: flex; align-items: center; gap: 7px; font-size: 12px;
                    min-width: 96px; font-weight: 600; }
+
+    /* ---- side-by-side recent matches (compare mode) ---- */
+    .recent-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    .recent-col .who { display: flex; align-items: center; gap: 7px; font-size: 12px;
+                       font-weight: 600; margin-bottom: 8px; }
+    .recent-col .who .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    /* Two tables in the width of one: drop the least load-bearing columns. */
+    .recent-compare th.col-len, .recent-compare td.col-len,
+    .recent-compare th.col-kda, .recent-compare td.col-kda { display: none; }
+    /* Stacking beats an unreadable squeeze once the columns get too narrow. */
+    @media (max-width: 1100px) { .recent-compare { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -330,6 +350,9 @@
     const kfmt = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : r0(n);
     const fmtWhen = (ts) => ts ? new Date(ts * 1000).toLocaleString([], {
       year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+    // Year dropped so two match tables fit side by side when comparing.
+    const fmtWhenShort = (ts) => ts ? new Date(ts * 1000).toLocaleString([], {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
     const fmtDay = (ts) => ts ? new Date(ts * 1000).toLocaleDateString([], {
       year: 'numeric', month: 'short', day: 'numeric' }) : '—';
     const heroIcon = (slug, cls) => slug
@@ -440,20 +463,38 @@
     }
 
     /* ---------------- main dashboard ---------------- */
+    /// Avatar + name + rank/MMR for one player. `cmp` picks the cool accent that
+    /// marks the compared user everywhere else in the dashboard.
+    function identityBlock(p, cmp) {
+      const rank = p.medal === 'Immortal'
+        ? (p.leaderboard_rank ? `Immortal #${p.leaderboard_rank}` : 'Immortal')
+        : `${p.medal} ${p.stars}`;
+      const mmr = p.mmr_estimate != null ? `${p.mmr_estimate} MMR` : 'MMR n/a';
+      return `<div class="pident${cmp ? ' cmp' : ''}">
+        ${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<div class="avatar"></div>`}
+        <div>
+          <div class="pname">${esc(p.name)}</div>
+          <div class="psub"><span class="badge">${esc(rank)}</span><span>${esc(mmr)}</span></div>
+        </div>
+      </div>`;
+    }
+
     async function loadProfile() {
+      const el = $('profileMain');
       try {
-        const p = await invoke('get_profile');
-        const rank = p.medal === 'Immortal'
-          ? (p.leaderboard_rank ? `Immortal #${p.leaderboard_rank}` : 'Immortal')
-          : `${p.medal} ${p.stars}`;
-        const mmr = p.mmr_estimate != null ? `${p.mmr_estimate} MMR` : 'MMR n/a';
-        $('profileMain').innerHTML = `
-          ${p.avatar ? `<img class="avatar" src="${esc(p.avatar)}" alt="">` : `<div class="avatar"></div>`}
-          <div>
-            <div class="pname">${esc(p.name)}</div>
-            <div class="psub"><span class="badge">${esc(rank)}</span><span>${esc(mmr)}</span></div>
-          </div>`;
-      } catch (e) { $('profileMain').innerHTML = `<p class="err">profile: ${esc(e)}</p>`; }
+        // The compared player's card is best-effort: a failure there must not
+        // blank out the active profile's own identity.
+        const [p, c] = await Promise.all([
+          invoke('get_profile'),
+          fetchCompare('get_profile', {}).catch(() => null),
+        ]);
+        el.classList.toggle('comparing', !!c);
+        el.innerHTML = identityBlock(p, false)
+          + (c ? `<span class="pvs">vs</span>${identityBlock(c, true)}` : '');
+      } catch (e) {
+        el.classList.remove('comparing');
+        el.innerHTML = `<p class="err">profile: ${esc(e)}</p>`;
+      }
     }
 
     // Text of the active profile in the dropdown — used for compare legends.
@@ -646,23 +687,43 @@
       } catch (e) { $('topwr').innerHTML = `<p class="err">top winrate: ${esc(e)}</p>`; }
     }
 
+    /// One match table. In compare mode the dates lose the year and the KDA and
+    /// Length columns are hidden by CSS, so two tables fit the card's width.
+    function recentTable(ms, compact) {
+      const when = compact ? fmtWhenShort : fmtWhen;
+      const rows = ms.map(m => {
+        const tag = m.is_turbo ? '<span class="turbo-tag">Turbo</span>' : '';
+        return `<tr data-match="${m.match_id}">
+          <td>${resTag(m.won)}</td>
+          <td class="muted">${esc(when(m.start_time))}</td>
+          <td><span class="hcell">${heroIcon(m.icon)}${esc(m.hero)}${tag}</span></td>
+          <td>${m.kills}/${m.deaths}/${m.assists}</td>
+          <td class="col-kda">${r1(m.kda)}</td>
+          <td class="muted col-len">${r0(m.duration / 60)}m</td>
+        </tr>`;
+      }).join('');
+      return `<table>
+        <thead><tr><th>Res</th><th>Date / Time</th><th>Hero</th><th>K/D/A</th>
+          <th class="col-kda">KDA</th><th class="col-len">Length</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+
     async function loadRecent() {
       try {
-        const ms = await invoke('get_recent', { limit: 12, includeTurbo, heroId: recentHeroFilter });
-        const rows = ms.map(m => {
-          const tag = m.is_turbo ? '<span class="turbo-tag">Turbo</span>' : '';
-          return `<tr data-match="${m.match_id}">
-            <td>${resTag(m.won)}</td>
-            <td class="muted">${esc(fmtWhen(m.start_time))}</td>
-            <td><span class="hcell">${heroIcon(m.icon)}${esc(m.hero)}${tag}</span></td>
-            <td>${m.kills}/${m.deaths}/${m.assists}</td>
-            <td>${r1(m.kda)}</td>
-            <td class="muted">${r0(m.duration / 60)}m</td>
-          </tr>`;
-        }).join('');
-        $('recent').innerHTML = `<table>
-          <thead><tr><th>Res</th><th>Date / Time</th><th>Hero</th><th>K/D/A</th><th>KDA</th><th>Length</th></tr></thead>
-          <tbody>${rows}</tbody></table>`;
+        const args = { limit: 12, includeTurbo, heroId: recentHeroFilter };
+        const [ms, mc] = await Promise.all([
+          invoke('get_recent', args),
+          fetchCompare('get_recent', args),
+        ]);
+        if (!mc) { $('recent').innerHTML = recentTable(ms, false); return; }
+        const col = (list, cmp, label) => `<div class="recent-col">
+          <div class="who"><span class="dot ${cmp ? 'cool' : 'warm'}"></span>${esc(label)}</div>
+          ${list.length ? recentTable(list, true) : '<p class="muted">No matches.</p>'}
+        </div>`;
+        $('recent').innerHTML = `<div class="recent-compare">
+          ${col(ms, false, mainLabelText())}
+          ${col(mc, true, compareLabel)}
+        </div>`;
       } catch (e) { $('recent').innerHTML = `<p class="err">recent: ${esc(e)}</p>`; }
     }
 
@@ -1054,6 +1115,7 @@
       compareSelected = v ? Number(v) : null;
       compareLabel = compareSelected != null ? e.target.selectedOptions[0].text.replace(/^vs\s+/, '') : '';
       updateCompareLegend();
+      loadProfile();
       loadStats();
     });
     $('editUsers').addEventListener('click', openUsersEditor);

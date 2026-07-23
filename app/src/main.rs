@@ -71,9 +71,9 @@ fn select_user(account_id: u64) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_profile() -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let api = client()?;
+async fn get_profile(account_id: Option<u64>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api = client_for(account_id)?;
         let p = api.player().map_err(|e| e.to_string())?;
         let name = p
             .profile
@@ -141,10 +141,11 @@ async fn get_recent(
     limit: Option<u32>,
     include_turbo: Option<bool>,
     hero_id: Option<u32>,
+    account_id: Option<u64>,
 ) -> Result<Value, String> {
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
+        let api = client_for(account_id)?;
         let n = limit.unwrap_or(12);
         // When a hero is given, pull that hero's match history instead.
         let matches = match hero_id {
