@@ -1,4 +1,4 @@
-//! dota-stats CLI — human-readable stats plus `--json` / `widget` output for
+//! dota-stats-cli — human-readable stats plus `--json` / `widget` output for
 //! waybar / eww / polybar. All data comes from the shared cached core.
 
 use dota_stats_core::models::{medal_name, medal_stars};
@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-dota-stats — Dota 2 stats from OpenDota
+dota-stats-cli — Dota 2 stats from OpenDota
 
 USAGE:
-    dota-stats <COMMAND> [OPTIONS]
+    dota-stats-cli <COMMAND> [OPTIONS]
 
 COMMANDS:
     profile              Name, rank/medal, and MMR estimate (if available)
@@ -99,7 +99,7 @@ fn parse_account_id(arg: Option<&str>) -> Result<u64> {
 fn cmd_users() -> Result<()> {
     let store = UsersStore::load()?;
     if store.profiles.is_empty() {
-        println!("No profiles yet. Add one with: dota-stats add <ACCOUNT_ID> [LABEL]");
+        println!("No profiles yet. Add one with: dota-stats-cli add <ACCOUNT_ID> [LABEL]");
         return Ok(());
     }
     for p in &store.profiles {

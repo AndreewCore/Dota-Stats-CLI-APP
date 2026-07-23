@@ -1,0 +1,33 @@
+# Maintainer: AndreewCore <paulandreerodriguezruilova@gmail.com>
+#
+# Builds the local working tree rather than a released tarball: this package is
+# meant for installing your own checkout with `make package`. Run it from the
+# repo with `cd packaging && makepkg -f`, or just `make package`.
+
+pkgname=dota-stats
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Personal Dota 2 dashboard: MMR, winrate, heroes and recent matches"
+arch=('x86_64')
+url="https://github.com/AndreewCore/Dota-Stats-CLI-APP"
+license=('MIT')
+# webkit2gtk-4.1 is the Tauri v2 webview; it pulls gtk3 and libsoup3 in turn.
+depends=('webkit2gtk-4.1' 'gtk3')
+makedepends=('cargo' 'make')
+options=('!lto')
+
+# The sources are the repo this PKGBUILD ships in, so nothing is downloaded.
+_repo="$startdir/.."
+
+build() {
+    cd "$_repo"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR="$_repo/target"
+    make build
+}
+
+package() {
+    cd "$_repo"
+    make install PREFIX=/usr DESTDIR="$pkgdir"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+}
