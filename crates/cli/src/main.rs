@@ -20,6 +20,7 @@ COMMANDS:
     heroes [--n N]       Top N most-played heroes (default 5)
     top-hero             Single most-played hero
     recent [--limit N]   Recent matches (default 10)
+    peers [--n N]        Top N teammates by games played together (default 10)
     widget <METRIC>      One-line JSON for bars: mmr|rank|winrate|top-hero
 
 PROFILES:
@@ -74,6 +75,7 @@ fn run(args: &[String]) -> Result<()> {
         "heroes" => cmd_heroes(&api, opt_value(args, "--n").unwrap_or(5), turbo, json),
         "top-hero" => cmd_top_hero(&api, turbo, json),
         "recent" => cmd_recent(&api, opt_value(args, "--limit").unwrap_or(10), turbo, json),
+        "peers" => cmd_peers(&api, opt_value(args, "--n").unwrap_or(10), json),
         "widget" => cmd_widget(&api, args.get(1).map(String::as_str).unwrap_or(""), turbo),
         other => {
             eprintln!("unknown command: {other}\n");
@@ -332,6 +334,46 @@ fn cmd_recent(api: &OpenDota, limit: u32, turbo: bool, json: bool) -> Result<()>
                 m.assists,
                 m.kda(),
                 m.duration / 60
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_peers(api: &OpenDota, n: u32, json: bool) -> Result<()> {
+    let mut peers = api.peers()?;
+    // Only teammates matter here; drop opponents-only rows and rank by games.
+    peers.retain(|p| p.with_games > 0);
+    peers.sort_by(|a, b| b.with_games.cmp(&a.with_games));
+    let top: Vec<_> = peers.iter().take(n as usize).collect();
+    // Private profiles have no persona; fall back to the account id.
+    let name = |p: &dota_stats_core::models::Peer| {
+        p.personaname.clone().unwrap_or_else(|| p.account_id.to_string())
+    };
+    if json {
+        let arr: Vec<_> = top
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "account_id": p.account_id,
+                    "name": name(p),
+                    "games": p.with_games,
+                    "win": p.with_win,
+                    "winrate": p.with_winrate(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::Value::Array(arr));
+    } else if top.is_empty() {
+        println!("no teammate data");
+    } else {
+        for (i, p) in top.iter().enumerate() {
+            println!(
+                "{:>2}. {:<24} {:>4} games  {:>5.1}% WR",
+                i + 1,
+                name(p),
+                p.with_games,
+                p.with_winrate()
             );
         }
     }

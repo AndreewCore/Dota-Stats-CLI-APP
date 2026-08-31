@@ -1,8 +1,9 @@
 # Dota 2 Stats
 
 Personal Dota 2 dashboard built on the [OpenDota API](https://docs.opendota.com):
-MMR/rank estimate, winrate, most-played heroes, KDA, and recent matches — as a
-native desktop app **and** a CLI you can wire into your bar/widgets.
+MMR/rank estimate, winrate, most-played heroes, KDA, recent matches, and the
+teammates you play with most — as a native desktop app **and** a CLI you can
+wire into your bar/widgets.
 
 ## Architecture
 
@@ -147,6 +148,7 @@ dota-stats-cli winrate            # overall W/L and win %
 dota-stats-cli heroes --n 5       # top N most-played heroes
 dota-stats-cli top-hero           # single most-played hero
 dota-stats-cli recent --limit 10  # recent matches with KDA
+dota-stats-cli peers --n 10       # top teammates by games played together
 dota-stats-cli widget <metric>    # one-line JSON for bars: mmr|rank|winrate|top-hero
 ```
 

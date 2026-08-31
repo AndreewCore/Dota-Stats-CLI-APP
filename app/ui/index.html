@@ -276,6 +276,20 @@
     .recent-compare th.col-kda, .recent-compare td.col-kda { display: none; }
     /* Stacking beats an unreadable squeeze once the columns get too narrow. */
     @media (max-width: 1100px) { .recent-compare { grid-template-columns: 1fr; } }
+
+    /* ---- played-with (peers) ---- */
+    .peer { display: grid; grid-template-columns: 28px 1fr auto; align-items: center;
+            gap: 11px; padding: 6px 4px; }
+    .peer .pavatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover;
+                     background: var(--panel-3); }
+    .peer .pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .peer .pname .muted { font-size: 12px; }
+    .peer .ppct { font-variant-numeric: tabular-nums; color: var(--gold);
+                  font-size: 13px; font-weight: 600; }
+    .peer.cmp .ppct { color: var(--blue-soft); }
+    .peers-compare .who { display: flex; align-items: center; gap: 7px; font-size: 12px;
+                          font-weight: 600; margin-bottom: 8px; }
+    .peers-compare .who .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
   </style>
 </head>
 <body>
@@ -322,6 +336,7 @@
     </div>
     <div class="col">
       <div class="card"><h2>Breakdowns</h2><div id="breakdowns"><p class="muted">Loading…</p></div></div>
+      <div class="card"><h2>Played with</h2><div id="peers"><p class="muted">Loading…</p></div></div>
       <div class="card grow-card"><h2 id="topwrTitle">Highest win rate</h2><div id="topwr"><p class="muted">Loading…</p></div></div>
     </div>
   </div>
@@ -727,6 +742,43 @@
       } catch (e) { $('recent').innerHTML = `<p class="err">recent: ${esc(e)}</p>`; }
     }
 
+    // One teammate row. `cmp` rows use the cool accent (compared profile).
+    function peerRow(p, cmp) {
+      const avatar = p.avatar
+        ? `<img class="pavatar" src="${esc(p.avatar)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+        : `<span class="pavatar"></span>`;
+      return `<div class="peer${cmp ? ' cmp' : ''}">
+        ${avatar}
+        <div class="pname">${esc(p.name)} <span class="muted">· ${p.games}g</span></div>
+        <span class="ppct">${r0(p.winrate)}%</span>
+      </div>`;
+    }
+    // Render a peer list, or an empty-state note.
+    function peerList(list, cmp) {
+      return list.peers.length
+        ? list.peers.map(p => peerRow(p, cmp)).join('')
+        : '<p class="muted">No teammate data.</p>';
+    }
+
+    async function loadPeers() {
+      try {
+        // No turbo dimension: /peers isn't mode-filterable.
+        const [ps, pc] = await Promise.all([
+          invoke('get_peers', { n: 10 }),
+          fetchCompare('get_peers', { n: 10 }),
+        ]);
+        if (!pc) { $('peers').innerHTML = peerList(ps, false); return; }
+        const col = (list, cmp, label) => `<div>
+          <div class="who"><span class="dot ${cmp ? 'cool' : 'warm'}"></span>${esc(label)}</div>
+          ${peerList(list, cmp)}
+        </div>`;
+        $('peers').innerHTML = `<div class="recent-compare peers-compare">
+          ${col(ps, false, mainLabelText())}
+          ${col(pc, true, compareLabel)}
+        </div>`;
+      } catch (e) { $('peers').innerHTML = `<p class="err">peers: ${esc(e)}</p>`; }
+    }
+
     async function loadHeroList() {
       try { heroIndex = await invoke('get_hero_list'); }
       catch (e) { /* search just won't autocomplete */ }
@@ -742,7 +794,7 @@
     function openHero(heroId) { heroTurbo = includeTurbo; pushView(() => renderHero(heroId)); }
 
     // Profile/rank are mode-independent; the Turbo toggle only reloads stats.
-    function loadStats() { loadWinrate(); loadPerformance(); loadHeroes(); loadBreakdowns(); loadTopWinrate(); loadRecent(); }
+    function loadStats() { loadWinrate(); loadPerformance(); loadHeroes(); loadBreakdowns(); loadPeers(); loadTopWinrate(); loadRecent(); }
     function loadAll() { loadProfile(); loadHeroList(); loadStats(); }
 
     /* ---------------- modal view stack ---------------- */

@@ -400,6 +400,37 @@ async fn get_breakdowns(include_turbo: Option<bool>, account_id: Option<u64>) ->
     .map_err(|e| e.to_string())?
 }
 
+/// Played-with: top teammates by games played together, from `/peers`.
+#[tauri::command]
+async fn get_peers(n: Option<u32>, account_id: Option<u64>) -> Result<Value, String> {
+    let n = n.unwrap_or(10) as usize;
+    tauri::async_runtime::spawn_blocking(move || {
+        let api = client_for(account_id)?;
+        let mut peers = api.peers().map_err(|e| e.to_string())?;
+        // Drop rows we've only faced as opponents; rank actual teammates.
+        peers.retain(|p| p.with_games > 0);
+        peers.sort_by(|a, b| b.with_games.cmp(&a.with_games));
+        peers.truncate(n);
+        let out: Vec<Value> = peers
+            .iter()
+            .map(|p| {
+                json!({
+                    "account_id": p.account_id,
+                    // Private profiles have no persona; fall back to the id.
+                    "name": p.personaname.clone().unwrap_or_else(|| p.account_id.to_string()),
+                    "avatar": p.avatarfull,
+                    "games": p.with_games,
+                    "win": p.with_win,
+                    "winrate": p.with_winrate(),
+                })
+            })
+            .collect();
+        Ok(json!({ "peers": out }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -416,7 +447,8 @@ fn main() {
             get_hero_detail,
             get_match_detail,
             get_performance,
-            get_breakdowns
+            get_breakdowns,
+            get_peers
         ])
         .run(tauri::generate_context!())
         .expect("error while running the dota-stats application");
