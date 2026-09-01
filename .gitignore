@@ -1,6 +1,11 @@
 /target
 **/*.rs.bk
 
+# makepkg build artifacts (`make package`)
+/packaging/pkg/
+/packaging/src/
+/packaging/*.pkg.tar.zst
+
 # Real profile data lives in the OS config dir, never in the repo:
 #   ~/.config/dota-stats/users.json   (account_ids / api_key — never commit)
 # The repo only ships the empty users.example.json template.
@@ -8,3 +13,9 @@
 # Local Claude Code settings
 .claude/settings.local.json
 CLAUDE.md
+
+# Local scratch state
+.projstatus
+
+# makepkg output (built packages + staged install tree), never sources
+/packaging/

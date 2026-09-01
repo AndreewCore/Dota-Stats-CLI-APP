@@ -10,9 +10,19 @@ use dota_stats_core::{OpenDota, UsersStore};
 use serde_json::{json, Value};
 
 fn client() -> Result<OpenDota, String> {
-    let cfg = UsersStore::load()
-        .and_then(|s| s.active_config())
-        .map_err(|e| e.to_string())?;
+    client_for(None)
+}
+
+/// Build a client for the active profile, or for an explicit `account_id`
+/// override. The override backs the compare-to view: it fetches a second saved
+/// player's stats without touching the active selection, while still using the
+/// store's global api_key.
+fn client_for(account_id: Option<u64>) -> Result<OpenDota, String> {
+    let store = UsersStore::load().map_err(|e| e.to_string())?;
+    let mut cfg = store.active_config().map_err(|e| e.to_string())?;
+    if let Some(id) = account_id {
+        cfg.account_id = id;
+    }
     Ok(OpenDota::new(&cfg))
 }
 
@@ -61,9 +71,9 @@ fn select_user(account_id: u64) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_profile() -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let api = client()?;
+async fn get_profile(account_id: Option<u64>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api = client_for(account_id)?;
         let p = api.player().map_err(|e| e.to_string())?;
         let name = p
             .profile
@@ -85,10 +95,10 @@ async fn get_profile() -> Result<Value, String> {
 }
 
 #[tauri::command]
-async fn get_winrate(include_turbo: Option<bool>) -> Result<Value, String> {
+async fn get_winrate(include_turbo: Option<bool>, account_id: Option<u64>) -> Result<Value, String> {
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
+        let api = client_for(account_id)?;
         let wl = api.win_loss(turbo).map_err(|e| e.to_string())?;
         Ok(json!({
             "win": wl.win, "lose": wl.lose,
@@ -100,10 +110,10 @@ async fn get_winrate(include_turbo: Option<bool>) -> Result<Value, String> {
 }
 
 #[tauri::command]
-async fn get_heroes(n: Option<u32>, include_turbo: Option<bool>) -> Result<Value, String> {
+async fn get_heroes(n: Option<u32>, include_turbo: Option<bool>, account_id: Option<u64>) -> Result<Value, String> {
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
+        let api = client_for(account_id)?;
         let heroes = api.heroes(turbo).map_err(|e| e.to_string())?;
         let names = api.hero_names().map_err(|e| e.to_string())?;
         let icons = api.hero_icons().map_err(|e| e.to_string())?;
@@ -131,10 +141,11 @@ async fn get_recent(
     limit: Option<u32>,
     include_turbo: Option<bool>,
     hero_id: Option<u32>,
+    account_id: Option<u64>,
 ) -> Result<Value, String> {
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
+        let api = client_for(account_id)?;
         let n = limit.unwrap_or(12);
         // When a hero is given, pull that hero's match history instead.
         let matches = match hero_id {
@@ -170,10 +181,11 @@ async fn get_top_winrate(
     n: Option<u32>,
     min_games: Option<u32>,
     include_turbo: Option<bool>,
+    account_id: Option<u64>,
 ) -> Result<Value, String> {
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
+        let api = client_for(account_id)?;
         let names = api.hero_names().map_err(|e| e.to_string())?;
         let icons = api.hero_icons().map_err(|e| e.to_string())?;
         let mut heroes = api.heroes(turbo).map_err(|e| e.to_string())?;
@@ -324,10 +336,10 @@ async fn get_match_detail(match_id: u64) -> Result<Value, String> {
 
 /// Performance summary: career per-game averages from `/totals`.
 #[tauri::command]
-async fn get_performance(include_turbo: Option<bool>) -> Result<Value, String> {
+async fn get_performance(include_turbo: Option<bool>, account_id: Option<u64>) -> Result<Value, String> {
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
+        let api = client_for(account_id)?;
         let totals = api.totals(turbo).map_err(|e| e.to_string())?;
         let avg = |field: &str| {
             totals
@@ -355,10 +367,10 @@ async fn get_performance(include_turbo: Option<bool>) -> Result<Value, String> {
 
 /// Breakdowns: win/games by lane role and by game mode from `/counts`.
 #[tauri::command]
-async fn get_breakdowns(include_turbo: Option<bool>) -> Result<Value, String> {
+async fn get_breakdowns(include_turbo: Option<bool>, account_id: Option<u64>) -> Result<Value, String> {
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
+        let api = client_for(account_id)?;
         let c = api.counts(turbo).map_err(|e| e.to_string())?;
 
         // role "0" is unknown; drop it. Sort by games desc.
