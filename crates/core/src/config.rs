@@ -37,18 +37,61 @@ pub struct UsersStore {
     pub api_key: Option<String>,
 }
 
-/// `$XDG_CONFIG_HOME/dota-stats` or `~/.config/dota-stats`.
+/// Directory holding `users.json`.
+///
+/// `XDG_CONFIG_HOME` is honoured on every platform, Windows included, so a
+/// portable copy can keep its profiles next to itself without a rebuild.
 pub fn config_dir() -> Result<PathBuf> {
     if let Some(x) = std::env::var_os("XDG_CONFIG_HOME") {
         if !x.is_empty() {
             return Ok(PathBuf::from(x).join("dota-stats"));
         }
     }
+    platform_config_dir()
+}
+
+/// `%APPDATA%\dota-stats`.
+///
+/// Roaming, not Local: the saved profiles are a handful of account ids the user
+/// would expect to follow them to another machine on the same account.
+#[cfg(windows)]
+fn platform_config_dir() -> Result<PathBuf> {
+    Ok(appdata_dir("APPDATA", "Roaming")?.join("dota-stats"))
+}
+
+/// `~/.config/dota-stats`.
+#[cfg(not(windows))]
+fn platform_config_dir() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .ok_or_else(|| Error::Config("HOME is not set".into()))?;
     Ok(PathBuf::from(home).join(".config").join("dota-stats"))
 }
 
+/// `%LOCALAPPDATA%`, the root the cache module hangs its directory off.
+#[cfg(windows)]
+pub(crate) fn local_appdata_dir() -> Result<PathBuf> {
+    appdata_dir("LOCALAPPDATA", "Local")
+}
+
+/// Resolve one of the AppData roots (`Roaming` or `Local`) from the environment.
+///
+/// Windows sets `var` for interactive sessions, but service and some CI shells
+/// run with a stripped environment, hence the `%USERPROFILE%\AppData\<sub>`
+/// fallback before giving up.
+#[cfg(windows)]
+fn appdata_dir(var: &str, sub: &str) -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os(var) {
+        if !dir.is_empty() {
+            return Ok(PathBuf::from(dir));
+        }
+    }
+    let profile = std::env::var_os("USERPROFILE")
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| Error::Config(format!("neither {var} nor USERPROFILE is set")))?;
+    Ok(PathBuf::from(profile).join("AppData").join(sub))
+}
+
+/// Full path of the saved-profiles file inside [`config_dir`].
 pub fn users_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("users.json"))
 }

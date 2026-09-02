@@ -1,19 +1,40 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-/// `$XDG_CACHE_HOME/dota-stats` or `~/.cache/dota-stats`.
+/// Directory holding the on-disk TTL cache.
+///
+/// `XDG_CACHE_HOME` is honoured on every platform, Windows included, so a
+/// portable copy can keep its cache next to itself without a rebuild.
 pub fn cache_dir() -> Result<PathBuf> {
     if let Some(x) = std::env::var_os("XDG_CACHE_HOME") {
         if !x.is_empty() {
             return Ok(PathBuf::from(x).join("dota-stats"));
         }
     }
+    platform_cache_dir()
+}
+
+/// `%LOCALAPPDATA%\dota-stats\cache`.
+///
+/// Local, never Roaming: cache entries are bulky, machine-specific and
+/// re-downloadable, so a roaming profile must not sync them across machines.
+#[cfg(windows)]
+fn platform_cache_dir() -> Result<PathBuf> {
+    Ok(crate::config::local_appdata_dir()?
+        .join("dota-stats")
+        .join("cache"))
+}
+
+/// `~/.cache/dota-stats`.
+#[cfg(not(windows))]
+fn platform_cache_dir() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
-        .ok_or_else(|| Error::Config("HOME is not set".into()))?;
+        .ok_or_else(|| crate::error::Error::Config("HOME is not set".into()))?;
     Ok(PathBuf::from(home).join(".cache").join("dota-stats"))
 }
 
+/// Absolute path of the cache entry for `key`.
 fn entry_path(key: &str) -> Result<PathBuf> {
     // Keys are internal slugs like "player_123" or "matches_20_core", but the
     // escape is injective (`%` + hex) rather than mapping every odd character to
