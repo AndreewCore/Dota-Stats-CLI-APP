@@ -16,6 +16,3 @@ CLAUDE.md
 
 # Local scratch state
 .projstatus
-
-# makepkg output (built packages + staged install tree), never sources
-/packaging/
