@@ -70,6 +70,35 @@ impl HeroStat {
     }
 }
 
+/// One element of `/players/{id}/peers` — a teammate you've queued with.
+/// Private profiles omit persona/avatar, so every field is optional.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Peer {
+    #[serde(default)]
+    pub account_id: u64,
+    #[serde(default)]
+    pub personaname: Option<String>,
+    #[serde(default)]
+    pub avatarfull: Option<String>,
+    #[serde(default)]
+    pub with_games: u32,
+    #[serde(default)]
+    pub with_win: u32,
+    #[serde(default)]
+    pub last_played: Option<i64>,
+}
+
+impl Peer {
+    /// Win% in the games this peer was on your team; 0 when you never teamed up.
+    pub fn with_winrate(&self) -> f64 {
+        if self.with_games == 0 {
+            0.0
+        } else {
+            self.with_win as f64 / self.with_games as f64 * 100.0
+        }
+    }
+}
+
 /// One element of `/players/{id}/matches`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchSummary {

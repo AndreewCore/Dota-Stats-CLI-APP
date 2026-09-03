@@ -133,6 +133,13 @@ impl OpenDota {
         self.get_json(&format!("/players/{id}/counts?significant={sig}"), &key, TTL_WL)
     }
 
+    /// `/players/{id}/peers` — teammates, with games/wins played together.
+    /// No `significant` param on this endpoint, so there's no turbo variant.
+    pub fn peers(&self) -> Result<Vec<Peer>> {
+        let id = self.account_id;
+        self.get_json(&format!("/players/{id}/peers"), &format!("peers_{id}"), TTL_WL)
+    }
+
     /// hero_id -> localized name, from the `/heroes` constant list (cached weekly).
     pub fn hero_names(&self) -> Result<std::collections::HashMap<u32, String>> {
         let heroes: Vec<Hero> = self.get_json("/heroes", "const_heroes", TTL_CONSTANTS)?;
