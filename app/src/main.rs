@@ -5,8 +5,9 @@
 //! callable from the vanilla JS frontend via window.__TAURI__.core.invoke(...).
 //! Network/cache work runs on a blocking thread so the UI never freezes.
 
-use dota_stats_core::models::{game_mode_name, lane_role_name, medal_name, medal_stars};
-use dota_stats_core::{OpenDota, UsersStore};
+use dota_stats_core::display::{hero_name, kda_ratio, peer_name, player_name, top_peers};
+use dota_stats_core::models::{game_mode_name, lane_role_name, medal_name, medal_stars, MatchSummary};
+use dota_stats_core::{cache, OpenDota, UsersStore};
 use serde_json::{json, Value};
 
 fn client() -> Result<OpenDota, String> {
@@ -70,18 +71,23 @@ fn select_user(account_id: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Drop the cached player responses so the next load refetches from OpenDota.
+/// The Refresh button calls this first; without it a refresh inside the TTL
+/// just re-reads the same file from disk.
+#[tauri::command]
+async fn clear_cache() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| cache::clear().map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn get_profile(account_id: Option<u64>) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let api = client_for(account_id)?;
         let p = api.player().map_err(|e| e.to_string())?;
-        let name = p
-            .profile
-            .as_ref()
-            .and_then(|x| x.personaname.clone())
-            .unwrap_or_else(|| format!("account {}", api.account_id()));
         Ok(json!({
-            "name": name,
+            "name": player_name(&p, api.account_id()),
             "avatar": p.profile.as_ref().and_then(|x| x.avatarfull.clone()),
             "medal": medal_name(p.rank_tier),
             "stars": medal_stars(p.rank_tier),
@@ -115,8 +121,7 @@ async fn get_heroes(n: Option<u32>, include_turbo: Option<bool>, account_id: Opt
     tauri::async_runtime::spawn_blocking(move || {
         let api = client_for(account_id)?;
         let heroes = api.heroes(turbo).map_err(|e| e.to_string())?;
-        let names = api.hero_names().map_err(|e| e.to_string())?;
-        let icons = api.hero_icons().map_err(|e| e.to_string())?;
+        let heroes_idx = api.hero_index().map_err(|e| e.to_string())?;
         let take = n.unwrap_or(8) as usize;
         let arr: Vec<Value> = heroes
             .iter()
@@ -124,8 +129,8 @@ async fn get_heroes(n: Option<u32>, include_turbo: Option<bool>, account_id: Opt
             .map(|h| {
                 json!({
                     "hero_id": h.hero_id,
-                    "hero": names.get(&h.hero_id).cloned().unwrap_or_else(|| h.hero_id.to_string()),
-                    "icon": icons.get(&h.hero_id),
+                    "hero": hero_name(&heroes_idx, h.hero_id),
+                    "icon": heroes_idx.slug(h.hero_id),
                     "games": h.games, "win": h.win, "winrate": h.winrate(),
                 })
             })
@@ -153,15 +158,14 @@ async fn get_recent(
             None => api.recent_matches(n, turbo),
         }
         .map_err(|e| e.to_string())?;
-        let names = api.hero_names().map_err(|e| e.to_string())?;
-        let icons = api.hero_icons().map_err(|e| e.to_string())?;
+        let heroes_idx = api.hero_index().map_err(|e| e.to_string())?;
         let arr: Vec<Value> = matches
             .iter()
             .map(|m| {
                 json!({
                     "match_id": m.match_id,
-                    "hero": names.get(&m.hero_id).cloned().unwrap_or_else(|| m.hero_id.to_string()),
-                    "icon": icons.get(&m.hero_id),
+                    "hero": hero_name(&heroes_idx, m.hero_id),
+                    "icon": heroes_idx.slug(m.hero_id),
                     "won": m.won(),
                     "kills": m.kills, "deaths": m.deaths, "assists": m.assists,
                     "kda": m.kda(), "duration": m.duration, "start_time": m.start_time,
@@ -186,8 +190,7 @@ async fn get_top_winrate(
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         let api = client_for(account_id)?;
-        let names = api.hero_names().map_err(|e| e.to_string())?;
-        let icons = api.hero_icons().map_err(|e| e.to_string())?;
+        let heroes_idx = api.hero_index().map_err(|e| e.to_string())?;
         let mut heroes = api.heroes(turbo).map_err(|e| e.to_string())?;
         let min = min_games.unwrap_or(5);
         heroes.retain(|h| h.games >= min);
@@ -203,8 +206,8 @@ async fn get_top_winrate(
             .map(|h| {
                 json!({
                     "hero_id": h.hero_id,
-                    "hero": names.get(&h.hero_id).cloned().unwrap_or_else(|| h.hero_id.to_string()),
-                    "icon": icons.get(&h.hero_id),
+                    "hero": hero_name(&heroes_idx, h.hero_id),
+                    "icon": heroes_idx.slug(h.hero_id),
                     "games": h.games, "win": h.win, "winrate": h.winrate(),
                 })
             })
@@ -216,17 +219,18 @@ async fn get_top_winrate(
 }
 
 /// Full hero list (id, name, icon) for the search box autocomplete.
+///
+/// The one command with no `account_id`: `/heroes` is a global constant, so a
+/// compared profile would receive the identical list.
 #[tauri::command]
 async fn get_hero_list() -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let api = client()?;
-        let names = api.hero_names().map_err(|e| e.to_string())?;
-        let icons = api.hero_icons().map_err(|e| e.to_string())?;
-        let mut list: Vec<(u32, String)> = names.into_iter().collect();
-        list.sort_by(|a, b| a.1.cmp(&b.1));
-        let arr: Vec<Value> = list
-            .iter()
-            .map(|(id, name)| json!({ "hero_id": id, "hero": name, "icon": icons.get(id) }))
+        let heroes_idx = api.hero_index().map_err(|e| e.to_string())?;
+        let arr: Vec<Value> = heroes_idx
+            .sorted_by_name()
+            .into_iter()
+            .map(|(id, name)| json!({ "hero_id": id, "hero": name, "icon": heroes_idx.slug(id) }))
             .collect();
         Ok(Value::Array(arr))
     })
@@ -236,12 +240,15 @@ async fn get_hero_list() -> Result<Value, String> {
 
 /// Hero drill-down: career line for one hero plus its recent enriched matches.
 #[tauri::command]
-async fn get_hero_detail(hero_id: u32, include_turbo: Option<bool>) -> Result<Value, String> {
+async fn get_hero_detail(
+    hero_id: u32,
+    include_turbo: Option<bool>,
+    account_id: Option<u64>,
+) -> Result<Value, String> {
     let turbo = include_turbo.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
-        let names = api.hero_names().map_err(|e| e.to_string())?;
-        let icons = api.hero_icons().map_err(|e| e.to_string())?;
+        let api = client_for(account_id)?;
+        let heroes_idx = api.hero_index().map_err(|e| e.to_string())?;
         let heroes = api.heroes(turbo).map_err(|e| e.to_string())?;
         let stat = heroes.iter().find(|h| h.hero_id == hero_id);
         let matches = api.hero_matches(hero_id, 20, turbo).map_err(|e| e.to_string())?;
@@ -249,13 +256,28 @@ async fn get_hero_detail(hero_id: u32, include_turbo: Option<bool>) -> Result<Va
         // Averages over the recent enriched matches.
         let n = matches.len().max(1) as f64;
         let sum = |f: &dyn Fn(&_) -> f64| matches.iter().map(f).sum::<f64>();
-        let avg_kills = sum(&|m: &dota_stats_core::models::MatchSummary| m.kills as f64) / n;
+        let avg_kills = sum(&|m: &MatchSummary| m.kills as f64) / n;
         let avg_deaths = sum(&|m| m.deaths as f64) / n;
         let avg_assists = sum(&|m| m.assists as f64) / n;
-        let avg_gpm = sum(&|m| m.gold_per_min.unwrap_or(0) as f64) / n;
-        let avg_xpm = sum(&|m| m.xp_per_min.unwrap_or(0) as f64) / n;
-        let avg_lh = sum(&|m| m.last_hits.unwrap_or(0) as f64) / n;
-        let avg_hd = sum(&|m| m.hero_damage.unwrap_or(0) as f64) / n;
+
+        // The economy fields ride on `project=` and are absent on games OpenDota
+        // never parsed. Averaging those in as zero would understate the hero, so
+        // they are meaned over the games that actually carry a value.
+        let avg_present = |f: &dyn Fn(&MatchSummary) -> Option<f64>| -> f64 {
+            let vals: Vec<f64> = matches.iter().filter_map(f).collect();
+            if vals.is_empty() {
+                0.0
+            } else {
+                vals.iter().sum::<f64>() / vals.len() as f64
+            }
+        };
+        let avg_gpm = avg_present(&|m| m.gold_per_min.map(f64::from));
+        let avg_xpm = avg_present(&|m| m.xp_per_min.map(f64::from));
+        let avg_lh = avg_present(&|m| m.last_hits.map(f64::from));
+        let avg_hd = avg_present(&|m| m.hero_damage.map(|v| v as f64));
+        // How many of the sampled games backed those economy averages, so the UI
+        // can label them honestly instead of implying the full match sample.
+        let economy_sample = matches.iter().filter(|m| m.gold_per_min.is_some()).count();
 
         let match_list: Vec<Value> = matches
             .iter()
@@ -274,16 +296,18 @@ async fn get_hero_detail(hero_id: u32, include_turbo: Option<bool>) -> Result<Va
             .collect();
 
         Ok(json!({
-            "hero": names.get(&hero_id).cloned().unwrap_or_else(|| hero_id.to_string()),
-            "icon": icons.get(&hero_id),
+            "hero": hero_name(&heroes_idx, hero_id),
+            "icon": heroes_idx.slug(hero_id),
             "games": stat.map(|s| s.games).unwrap_or(0),
             "win": stat.map(|s| s.win).unwrap_or(0),
             "winrate": stat.map(|s| s.winrate()).unwrap_or(0.0),
             "last_played": stat.and_then(|s| s.last_played),
             "avg_kills": avg_kills, "avg_deaths": avg_deaths, "avg_assists": avg_assists,
+            "avg_kda": kda_ratio(avg_kills, avg_deaths, avg_assists),
             "avg_gpm": avg_gpm, "avg_xpm": avg_xpm,
             "avg_last_hits": avg_lh, "avg_hero_damage": avg_hd,
             "sample": matches.len(),
+            "economy_sample": economy_sample,
             "matches": match_list,
         }))
     })
@@ -293,11 +317,10 @@ async fn get_hero_detail(hero_id: u32, include_turbo: Option<bool>) -> Result<Va
 
 /// Match drill-down: full 10-player scoreboard plus gold/xp advantage curves.
 #[tauri::command]
-async fn get_match_detail(match_id: u64) -> Result<Value, String> {
+async fn get_match_detail(match_id: u64, account_id: Option<u64>) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let api = client()?;
-        let names = api.hero_names().map_err(|e| e.to_string())?;
-        let icons = api.hero_icons().map_err(|e| e.to_string())?;
+        let api = client_for(account_id)?;
+        let heroes_idx = api.hero_index().map_err(|e| e.to_string())?;
         let m = api.match_detail(match_id).map_err(|e| e.to_string())?;
 
         let players: Vec<Value> = m
@@ -305,8 +328,8 @@ async fn get_match_detail(match_id: u64) -> Result<Value, String> {
             .iter()
             .map(|p| {
                 json!({
-                    "hero": names.get(&p.hero_id).cloned().unwrap_or_else(|| p.hero_id.to_string()),
-                    "icon": icons.get(&p.hero_id),
+                    "hero": hero_name(&heroes_idx, p.hero_id),
+                    "icon": heroes_idx.slug(p.hero_id),
                     "name": p.personaname,
                     "is_me": p.account_id == Some(api.account_id()),
                     "radiant": p.is_radiant(),
@@ -351,9 +374,12 @@ async fn get_performance(include_turbo: Option<bool>, account_id: Option<u64>) -
         let k = avg("kills");
         let d = avg("deaths");
         let a = avg("assists");
-        let kda = (k + a) / d.max(1.0);
+        let kda = kda_ratio(k, d, a);
         Ok(json!({
-            "games": totals.iter().map(|t| t.n).max().unwrap_or(0),
+            // `n` is per-field, and "kills" is recorded for every game, so it is
+            // the field's true game count rather than the max across fields.
+            "games": totals.iter().find(|t| t.field == "kills").map(|t| t.n)
+                .unwrap_or_else(|| totals.iter().map(|t| t.n).max().unwrap_or(0)),
             "kills": k, "deaths": d, "assists": a, "kda": kda,
             "gpm": avg("gold_per_min"), "xpm": avg("xp_per_min"),
             "last_hits": avg("last_hits"), "denies": avg("denies"),
@@ -406,18 +432,13 @@ async fn get_peers(n: Option<u32>, account_id: Option<u64>) -> Result<Value, Str
     let n = n.unwrap_or(10) as usize;
     tauri::async_runtime::spawn_blocking(move || {
         let api = client_for(account_id)?;
-        let mut peers = api.peers().map_err(|e| e.to_string())?;
-        // Drop rows we've only faced as opponents; rank actual teammates.
-        peers.retain(|p| p.with_games > 0);
-        peers.sort_by(|a, b| b.with_games.cmp(&a.with_games));
-        peers.truncate(n);
+        let peers = top_peers(api.peers().map_err(|e| e.to_string())?, n);
         let out: Vec<Value> = peers
             .iter()
             .map(|p| {
                 json!({
                     "account_id": p.account_id,
-                    // Private profiles have no persona; fall back to the id.
-                    "name": p.personaname.clone().unwrap_or_else(|| p.account_id.to_string()),
+                    "name": peer_name(p),
                     "avatar": p.avatarfull,
                     "games": p.with_games,
                     "win": p.with_win,
@@ -432,12 +453,15 @@ async fn get_peers(n: Option<u32>, account_id: Option<u64>) -> Result<Value, Str
 }
 
 fn main() {
+    // Sweep entries left by long-gone matches before the first window paints.
+    cache::prune();
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             list_users,
             add_user,
             remove_user,
             select_user,
+            clear_cache,
             get_profile,
             get_winrate,
             get_heroes,

@@ -1,9 +1,9 @@
 //! dota-stats-cli — human-readable stats plus `--json` / `widget` output for
 //! waybar / eww / polybar. All data comes from the shared cached core.
 
+use dota_stats_core::display::{hero_name, peer_name, player_name, rank_label, top_peers};
 use dota_stats_core::models::{medal_name, medal_stars};
 use dota_stats_core::{OpenDota, Result, UsersStore};
-use std::collections::HashMap;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
@@ -36,6 +36,7 @@ OPTIONS:
 ";
 
 fn main() -> ExitCode {
+    dota_stats_core::cache::prune();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
@@ -140,11 +141,7 @@ fn cmd_remove(arg: Option<&str>) -> Result<()> {
 
 fn cmd_profile(api: &OpenDota, json: bool) -> Result<()> {
     let p = api.player()?;
-    let name = p
-        .profile
-        .as_ref()
-        .and_then(|x| x.personaname.clone())
-        .unwrap_or_else(|| format!("account {}", api.account_id()));
+    let name = player_name(&p, api.account_id());
     let medal = medal_name(p.rank_tier);
     let stars = medal_stars(p.rank_tier);
     let mmr = p.mmr_estimate.as_ref().and_then(|m| m.estimate);
@@ -161,14 +158,7 @@ fn cmd_profile(api: &OpenDota, json: bool) -> Result<()> {
         println!("{v}");
     } else {
         println!("{name}");
-        if medal == "Immortal" {
-            match p.leaderboard_rank {
-                Some(r) => println!("Rank: Immortal (#{r})"),
-                None => println!("Rank: Immortal"),
-            }
-        } else {
-            println!("Rank: {medal} {stars}");
-        }
+        println!("Rank: {}", rank_label(medal, stars, p.leaderboard_rank));
         match mmr {
             Some(m) => println!("MMR estimate: {m}"),
             None => println!("MMR estimate: n/a"),
@@ -200,10 +190,8 @@ fn cmd_rank(api: &OpenDota, json: bool) -> Result<()> {
             "{}",
             serde_json::json!({ "medal": medal, "stars": stars, "rank_tier": p.rank_tier })
         );
-    } else if medal == "Immortal" {
-        println!("Immortal");
     } else {
-        println!("{medal} {stars}");
+        println!("{}", rank_label(medal, stars, p.leaderboard_rank));
     }
     Ok(())
 }
@@ -232,14 +220,14 @@ fn cmd_winrate(api: &OpenDota, turbo: bool, json: bool) -> Result<()> {
 
 fn cmd_heroes(api: &OpenDota, n: u32, turbo: bool, json: bool) -> Result<()> {
     let heroes = api.heroes(turbo)?;
-    let names = api.hero_names()?;
+    let names = api.hero_index()?;
     let top: Vec<_> = heroes.iter().take(n as usize).collect();
     if json {
         let arr: Vec<_> = top
             .iter()
             .map(|h| {
                 serde_json::json!({
-                    "hero": names.get(&h.hero_id).cloned().unwrap_or_else(|| h.hero_id.to_string()),
+                    "hero": hero_name(&names, h.hero_id),
                     "games": h.games,
                     "win": h.win,
                     "winrate": h.winrate(),
@@ -249,10 +237,7 @@ fn cmd_heroes(api: &OpenDota, n: u32, turbo: bool, json: bool) -> Result<()> {
         println!("{}", serde_json::Value::Array(arr));
     } else {
         for (i, h) in top.iter().enumerate() {
-            let name = names
-                .get(&h.hero_id)
-                .cloned()
-                .unwrap_or_else(|| format!("hero {}", h.hero_id));
+            let name = hero_name(&names, h.hero_id);
             println!(
                 "{:>2}. {:<20} {:>4} games  {:>5.1}% WR",
                 i + 1,
@@ -267,14 +252,11 @@ fn cmd_heroes(api: &OpenDota, n: u32, turbo: bool, json: bool) -> Result<()> {
 
 fn cmd_top_hero(api: &OpenDota, turbo: bool, json: bool) -> Result<()> {
     let heroes = api.heroes(turbo)?;
-    let names = api.hero_names()?;
+    let names = api.hero_index()?;
     let top = heroes.first();
     match top {
         Some(h) => {
-            let name = names
-                .get(&h.hero_id)
-                .cloned()
-                .unwrap_or_else(|| format!("hero {}", h.hero_id));
+            let name = hero_name(&names, h.hero_id);
             if json {
                 println!(
                     "{}",
@@ -294,14 +276,14 @@ fn cmd_top_hero(api: &OpenDota, turbo: bool, json: bool) -> Result<()> {
 
 fn cmd_recent(api: &OpenDota, limit: u32, turbo: bool, json: bool) -> Result<()> {
     let matches = api.recent_matches(limit, turbo)?;
-    let names = api.hero_names()?;
+    let names = api.hero_index()?;
     if json {
         let arr: Vec<_> = matches
             .iter()
             .map(|m| {
                 serde_json::json!({
                     "match_id": m.match_id,
-                    "hero": names.get(&m.hero_id).cloned().unwrap_or_else(|| m.hero_id.to_string()),
+                    "hero": hero_name(&names, m.hero_id),
                     "won": m.won(),
                     "kills": m.kills, "deaths": m.deaths, "assists": m.assists,
                     "kda": m.kda(),
@@ -315,10 +297,7 @@ fn cmd_recent(api: &OpenDota, limit: u32, turbo: bool, json: bool) -> Result<()>
         println!("{}", serde_json::Value::Array(arr));
     } else {
         for m in &matches {
-            let name = names
-                .get(&m.hero_id)
-                .cloned()
-                .unwrap_or_else(|| format!("hero {}", m.hero_id));
+            let name = hero_name(&names, m.hero_id);
             let res = match m.won() {
                 Some(true) => "W",
                 Some(false) => "L",
@@ -341,22 +320,14 @@ fn cmd_recent(api: &OpenDota, limit: u32, turbo: bool, json: bool) -> Result<()>
 }
 
 fn cmd_peers(api: &OpenDota, n: u32, json: bool) -> Result<()> {
-    let mut peers = api.peers()?;
-    // Only teammates matter here; drop opponents-only rows and rank by games.
-    peers.retain(|p| p.with_games > 0);
-    peers.sort_by(|a, b| b.with_games.cmp(&a.with_games));
-    let top: Vec<_> = peers.iter().take(n as usize).collect();
-    // Private profiles have no persona; fall back to the account id.
-    let name = |p: &dota_stats_core::models::Peer| {
-        p.personaname.clone().unwrap_or_else(|| p.account_id.to_string())
-    };
+    let top = top_peers(api.peers()?, n as usize);
     if json {
         let arr: Vec<_> = top
             .iter()
             .map(|p| {
                 serde_json::json!({
                     "account_id": p.account_id,
-                    "name": name(p),
+                    "name": peer_name(p),
                     "games": p.with_games,
                     "win": p.with_win,
                     "winrate": p.with_winrate(),
@@ -371,7 +342,7 @@ fn cmd_peers(api: &OpenDota, n: u32, json: bool) -> Result<()> {
             println!(
                 "{:>2}. {:<24} {:>4} games  {:>5.1}% WR",
                 i + 1,
-                name(p),
+                peer_name(p),
                 p.with_games,
                 p.with_winrate()
             );
@@ -407,22 +378,19 @@ fn cmd_widget(api: &OpenDota, metric: &str, turbo: bool) -> Result<()> {
     let (text, tooltip) = match metric {
         "mmr" => {
             let p = api.player()?;
-            let medal = medal_name(p.rank_tier);
-            let stars = medal_stars(p.rank_tier);
+            let rank = rank_label(medal_name(p.rank_tier), medal_stars(p.rank_tier), p.leaderboard_rank);
             // OpenDota deprecated mmr_estimate for most accounts; fall back to
             // the rank medal so the bar shows something useful.
             let text = match p.mmr_estimate.as_ref().and_then(|m| m.estimate) {
                 Some(m) => m.to_string(),
-                None => format!("{medal} {stars}"),
+                None => rank.clone(),
             };
-            (text, format!("{medal} {stars}"))
+            (text, rank)
         }
         "rank" => {
             let p = api.player()?;
-            let medal = medal_name(p.rank_tier);
-            let stars = medal_stars(p.rank_tier);
             (
-                if medal == "Immortal" { "Immortal".to_string() } else { format!("{medal} {stars}") },
+                rank_label(medal_name(p.rank_tier), medal_stars(p.rank_tier), p.leaderboard_rank),
                 format!("rank_tier {:?}", p.rank_tier),
             )
         }
@@ -435,13 +403,10 @@ fn cmd_widget(api: &OpenDota, metric: &str, turbo: bool) -> Result<()> {
         }
         "top-hero" => {
             let heroes = api.heroes(turbo)?;
-            let names: HashMap<u32, String> = api.hero_names()?;
+            let names = api.hero_index()?;
             match heroes.first() {
                 Some(h) => {
-                    let name = names
-                        .get(&h.hero_id)
-                        .cloned()
-                        .unwrap_or_else(|| format!("hero {}", h.hero_id));
+                    let name = hero_name(&names, h.hero_id);
                     (name.clone(), format!("{name}: {} games, {:.1}% WR", h.games, h.winrate()))
                 }
                 None => ("n/a".into(), "no hero data".into()),

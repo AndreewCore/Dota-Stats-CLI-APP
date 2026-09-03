@@ -59,9 +59,12 @@ A real request set is therefore triggered by:
 - **Toggling Turbo** — Turbo and core stats use separate cache keys, so the
   first toggle refetches the affected endpoints.
 
-> **Note:** the **↻ Refresh** button re-reads through the cache; it does *not*
-> bypass it, so it only produces network calls for entries whose TTL has already
-> expired. It will not force fresh data while entries are still within their TTL.
+- **↻ Refresh** — drops every cached player response and reloads, so it always
+  produces a fresh request set regardless of TTL. The hero constants are kept:
+  they change on patch days, not on demand.
+
+Cache entries older than 30 days are removed on startup, so match detail (cached
+for ~7 days and never otherwise revisited) does not accumulate forever.
 
 ### Supply-chain notes
 - HTTP via **`ureq`** (rustls, no OpenSSL; no tokio/hyper tree).

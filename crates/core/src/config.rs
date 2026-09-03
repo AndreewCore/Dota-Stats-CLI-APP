@@ -111,11 +111,19 @@ impl UsersStore {
         serde_json::from_str(&text).map_err(Error::from)
     }
 
+    /// Persist the store. Writes to a temp file and renames, because a partial
+    /// write here loses every saved profile, not just the edit in flight.
     pub fn save(&self) -> Result<()> {
         let dir = config_dir()?;
         std::fs::create_dir_all(&dir)?;
         let text = serde_json::to_string_pretty(self).map_err(Error::from)?;
-        std::fs::write(users_path()?, text)?;
+        let path = users_path()?;
+        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        std::fs::write(&tmp, text)?;
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            std::fs::remove_file(&tmp).ok();
+            return Err(e.into());
+        }
         Ok(())
     }
 
