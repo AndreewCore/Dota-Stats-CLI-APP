@@ -1,0 +1,73 @@
+# Builds the portable Windows bundle: both binaries zipped, no installer.
+#
+# Only runs on demand or on a release tag — a Windows build is the slowest job
+# in this repo and nothing here is validated per-push on Linux anyway.
+name: windows
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed by `gh release create` on the tag path
+
+env:
+  CARGO_TERM_COLOR: always
+  ARCHIVE: dota-stats-windows-x86_64
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --no-self-update
+
+      # Keyed on Cargo.lock: the lockfile is committed, so a hit means the exact
+      # same dependency set and the ~200 crates below tauri need no rebuild.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-windows-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-windows-
+
+      - name: Build
+        run: cargo build --release --locked
+
+      # Plain zip, not an installer: it carries the CLI as well as the GUI, and
+      # an unsigned MSI trips SmartScreen harder than a bare executable does.
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path staging | Out-Null
+          Copy-Item target/release/dota-stats.exe     staging/
+          Copy-Item target/release/dota-stats-cli.exe staging/
+          Copy-Item LICENSE                           staging/
+          Compress-Archive -Path staging/* -DestinationPath "$env:ARCHIVE.zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}.zip
+          if-no-files-found: error
+
+      # Tag pushes additionally publish the zip as a release asset. `gh` ships
+      # with the runner, so no third-party release action is pulled in.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${ARCHIVE}.zip" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            || gh release upload "${GITHUB_REF_NAME}" "${ARCHIVE}.zip" --clobber

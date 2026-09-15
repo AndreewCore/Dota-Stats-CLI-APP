@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dota 2 Stats
+GenericName=Dota 2 Statistics
+Comment=MMR estimate, winrate, most-played heroes and recent matches
+Exec=@BINDIR@/dota-stats
+Icon=dota-stats
+Terminal=false
+Categories=Game;
+Keywords=dota;dota2;stats;mmr;opendota;
+StartupWMClass=dota-stats

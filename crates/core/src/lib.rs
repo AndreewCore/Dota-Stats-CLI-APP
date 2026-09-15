@@ -4,6 +4,7 @@
 pub mod cache;
 pub mod client;
 pub mod config;
+pub mod display;
 pub mod error;
 pub mod models;
 
