@@ -16,3 +16,6 @@ CLAUDE.md
 
 # Local scratch state
 .projstatus
+
+# Static web builds (`sh web/build.sh site|pwa`)
+/web/*/dist/

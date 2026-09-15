@@ -1,6 +1,7 @@
 // Dashboard frontend. Loaded as a file, not inline, so the app's CSP can
 // keep script-src at 'self' without relying on nonce injection.
-const invoke = window.__TAURI__.core.invoke;
+// The web builds load backend.js first, which answers the same commands in-browser.
+const invoke = window.DotaBackend ? window.DotaBackend.invoke : window.__TAURI__.core.invoke;
 const $ = (id) => document.getElementById(id);
 // Covers ' as well: these strings land in attributes, and a single-quoted
 // one elsewhere in the file would otherwise be escapable.
@@ -349,10 +350,10 @@ function recentTable(ms, mc) {
     ? pairByPosition(ms, mc).map(([m, c]) =>
         `<tbody class="pair">${m ? recentRow(m, false) : ''}${c ? recentRow(c, true) : ''}</tbody>`).join('')
     : `<tbody>${ms.map(m => recentRow(m, false)).join('')}</tbody>`;
-  return `<table${mc ? ' class="cmp-table"' : ''}>
+  return `<div class="table-scroll"><table${mc ? ' class="cmp-table"' : ''}>
     <thead><tr><th>Res</th><th>Date / Time</th><th>Hero</th><th>K/D/A</th>
       <th class="col-kda">KDA</th><th class="col-len">Length</th></tr></thead>
-    ${body}</table>`;
+    ${body}</table></div>`;
 }
 
 async function loadRecent() {
@@ -484,8 +485,8 @@ async function renderHero(heroId, accountId) {
   </tr>`).join('');
   const table = d.matches.length ? `
     <div class="teamtitle">Recent matches on this hero</div>
-    <table><thead><tr><th>Res</th><th>Date / Time</th><th>K/D/A</th><th>KDA</th><th>GPM</th><th>XPM</th><th>Length</th></tr></thead>
-    <tbody>${rows}</tbody></table>` : '<p class="muted">No recent matches.</p>';
+    <div class="table-scroll"><table><thead><tr><th>Res</th><th>Date / Time</th><th>K/D/A</th><th>KDA</th><th>GPM</th><th>XPM</th><th>Length</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>` : '<p class="muted">No recent matches.</p>';
   const overview = `<div class="ov">
     <div class="wheel">${donutSVG(d.winrate, 'WIN RATE', 116)}
       <div class="muted" style="font-size:12px;margin-top:2px">${d.win} / ${d.games} won</div></div>
@@ -544,8 +545,8 @@ function teamTable(players, side, label, win) {
   const rows = players.filter(p => p.radiant === side).map(scoreRow).join('');
   const tag = win === true ? ' · Victory' : win === false ? ' · Defeat' : '';
   return `<div class="teamtitle ${side ? 'radiant' : 'dire'}">${label}${tag}</div>
-    <table><thead><tr><th>Hero</th><th>Player</th><th>Lv</th><th>K/D/A</th><th>Net</th><th>GPM</th><th>XPM</th><th>LH/DN</th><th>Dmg</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+    <div class="table-scroll"><table><thead><tr><th>Hero</th><th>Player</th><th>Lv</th><th>K/D/A</th><th>Net</th><th>GPM</th><th>XPM</th><th>LH/DN</th><th>Dmg</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 async function renderMatch(matchId, accountId) {
   const m = await invoke('get_match_detail', { matchId, accountId });

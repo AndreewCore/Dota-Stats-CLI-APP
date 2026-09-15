@@ -282,3 +282,46 @@ tr.me:hover { background: rgba(201,162,75,.16); }
 .peer .ppct { font-variant-numeric: tabular-nums; color: var(--gold);
               font-size: 13px; font-weight: 600; }
 .peer.cmp .ppct { color: var(--blue-soft); }
+
+/* ---- download buttons (web builds only; web.js reveals them) ---- */
+.getapp { display: flex; gap: 10px; flex-wrap: wrap; }
+/* `hidden` alone loses to the display above, and the desktop app must never show these. */
+.getapp[hidden], .getapp .btn[hidden] { display: none; }
+a.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        background: var(--panel-2); color: var(--text); text-decoration: none; cursor: pointer;
+        border: 1px solid var(--line); padding: 9px 15px; border-radius: 8px; font-size: 13px;
+        transition: border-color .12s, background .12s; }
+a.btn:hover { border-color: var(--red); background: var(--panel-3); }
+
+/* ---- small screens ---- */
+.table-scroll { overflow-x: auto; }
+/* Grid children default to min-width:auto, which lets long names widen the page. */
+.hero > div, .peer > div { min-width: 0; }
+@media (max-width: 700px) {
+  body { padding: 16px 14px 40px; }
+  .topbar { flex-direction: column; align-items: stretch; }
+  .controls { flex-wrap: wrap; justify-content: space-between; }
+  .getapp { width: 100%; }
+  .getapp .btn { flex: 1; }
+  .profile { padding: 14px 16px; }
+  #profileMain { width: 100%; }
+  .pcontrols { margin-left: 0; width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .pcontrols #editUsers, .pcontrols .cmp-legend { grid-column: 1 / -1; }
+  .userselect { max-width: none; width: 100%; }
+  .cmp-legend { justify-content: flex-start; flex-wrap: wrap; }
+  .card-head .search-wrap, .card-head .search, .suggest { width: 100%; }
+  .wr-wrap, .wr-row { gap: 14px; flex-wrap: wrap; }
+  .wr-row .who { min-width: 0; width: 100%; }
+  #overlay { padding: 0; }
+  .modal { border-radius: 0; min-height: 100%; }
+  .mhead { flex-wrap: wrap; }
+  .ov .grow { min-width: 0; }
+}
+@media (max-width: 560px) {
+  .avgs { grid-template-columns: repeat(2, 1fr); }
+  .bar { grid-template-columns: 70px 1fr 78px; gap: 8px; font-size: 12px; }
+  #recent .col-kda, #recent .col-len { display: none; }
+  .hero { gap: 9px; font-size: 13px; }
+  table { font-size: 12.5px; }
+  th, td { padding: 7px 6px; }
+}
