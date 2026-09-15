@@ -17,6 +17,9 @@ wire into your bar/widgets.
    (waybar/eww/polybar)
 ```
 
+`web/` also serves the same dashboard as a static site and PWA, without Rust —
+see [Web version](#web-version).
+
 One cached core feeds both the GUI and the CLI, so widgets refreshing every few
 minutes never hammer OpenDota. Both live in the OS' own per-user directories:
 
@@ -71,6 +74,7 @@ for ~7 days and never otherwise revisited) does not accumulate forever.
 - CLI arg parsing is hand-rolled — no `clap`.
 - The Tauri frontend is **vanilla HTML/CSS/JS — no npm/Node build step**.
 - Build with `cargo build --locked`; `Cargo.lock` is committed.
+- The web build adds no dependencies either: `web/build.sh` is plain `sh` + `sed`.
 
 ## Build
 
@@ -154,8 +158,9 @@ under `/usr` instead of `~/.local`.
 
 ### Windows (portable zip)
 
-There is no installer. Grab `dota-stats-windows-x86_64.zip` from the
-[releases page](https://github.com/AndreewCore/Dota-Stats-CLI-APP/releases),
+There is no installer. Grab
+[`dota-stats-windows-x86_64.zip`](https://github.com/AndreewCore/Dota-Stats-CLI-APP/releases/latest/download/dota-stats-windows-x86_64.zip)
+from the latest release,
 unzip it anywhere you like and run `dota-stats.exe`. The zip holds both
 binaries; `dota-stats-cli.exe` is used from a terminal opened in that folder,
 or from anywhere once you add the folder to your `PATH`.
@@ -168,6 +173,43 @@ folder; the profiles under `%APPDATA%\dota-stats\` and the cache under
 If no release carries the zip yet, run the **windows** workflow from the repo's
 Actions tab (`Run workflow`) and download the artifact it leaves behind — or
 build it yourself with the steps under [Build → Windows](#windows).
+
+## Web version
+
+The same dashboard also runs in the browser with no Rust involved.
+`web/src/backend.js` answers the desktop app's commands client-side: it calls
+OpenDota directly (the API allows cross-origin requests) and mirrors the core's
+endpoints, TTLs, cache keys and JSON shapes. Profiles and cached responses live
+in the browser's `localStorage`; nothing is sent anywhere but `api.opendota.com`.
+
+`web/build.sh` produces two builds, each deployed as its own Vercel project:
+
+| Build | Vercel root directory | What it is |
+|---|---|---|
+| `site` | `web/site` | The public page. No manifest or service worker, so browsers don't offer to install it. Header buttons link to the PWA and to the Windows zip. |
+| `pwa` | `web/pwa` | The same dashboard plus a manifest and an offline service worker. Its **Install app** button starts the installation. |
+
+```bash
+sh web/build.sh site                          # -> web/site/dist
+sh web/build.sh pwa                           # -> web/pwa/dist
+python3 -m http.server -d web/site/dist 8000  # preview locally
+```
+
+**Deploying:** import this repo into Vercel twice, with the root directory set
+to `web/site` and `web/pwa`, and enable *Include files outside the Root
+Directory* (the build copies `app/ui`). Each folder's `vercel.json` sets the
+build command, the output directory and the security headers. If the PWA
+project gets a domain other than `dota-stats-app.vercel.app`, update `PWA_URL`
+in `web/src/web.js`.
+
+**Rate limits:** without a key, OpenDota allows 60 requests per minute and 3000
+per day **per IP**. Requests leave from each visitor's browser, so every visitor
+has their own budget; a cold dashboard costs about 8 requests (about 16 while
+comparing). Never put an API key in the web build — it would be public.
+
+**Installing:** Chrome, Edge and Android browsers install through the button.
+iOS Safari only installs via *Share → Add to Home Screen*, and Firefox on
+desktop cannot install web apps; the button explains both.
 
 ## Profiles
 

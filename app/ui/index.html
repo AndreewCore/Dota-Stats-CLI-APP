@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dota 2 Stats</title>
   <link rel="stylesheet" href="styles.css" />
+  <!-- web:head -->
 </head>
 <body>
   <div class="topbar">
@@ -13,6 +14,10 @@
       <div><h1>Dota 2 Stats</h1><div class="sub">via OpenDota · cached locally</div></div>
     </div>
     <div class="controls">
+      <div id="getApp" class="getapp" hidden>
+        <a id="getPwa" class="btn">Get the app</a>
+        <a id="getWin" class="btn" rel="noopener">⬇ Windows portable</a>
+      </div>
       <label class="switch" id="turboSwitch" title="Include Turbo matches in all stats">
         <input type="checkbox" id="turbo" />
         <span class="track"></span>
@@ -70,6 +75,7 @@
 
   <div id="overlay"><div class="modal" id="modal"></div></div>
 
+  <!-- web:scripts -->
   <script src="app.js"></script>
 </body>
 </html>
