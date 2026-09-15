@@ -5,7 +5,7 @@
 # repo with `cd packaging && makepkg -f`, or just `make package`.
 
 pkgname=dota-stats
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Personal Dota 2 dashboard: MMR, winrate, heroes and recent matches"
 arch=('x86_64')

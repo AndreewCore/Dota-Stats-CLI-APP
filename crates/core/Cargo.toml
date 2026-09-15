@@ -9,4 +9,3 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # Small, blocking HTTP client. rustls (no OpenSSL), no tokio/hyper tree.
 ureq = { version = "2", features = ["json"] }
-toml = "0.8"

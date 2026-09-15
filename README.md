@@ -1,8 +1,9 @@
 # Dota 2 Stats
 
 Personal Dota 2 dashboard built on the [OpenDota API](https://docs.opendota.com):
-MMR/rank estimate, winrate, most-played heroes, KDA, and recent matches — as a
-native desktop app **and** a CLI you can wire into your bar/widgets.
+MMR/rank estimate, winrate, most-played heroes, KDA, recent matches, and the
+teammates you play with most — as a native desktop app **and** a CLI you can
+wire into your bar/widgets.
 
 ## Architecture
 
@@ -58,9 +59,12 @@ A real request set is therefore triggered by:
 - **Toggling Turbo** — Turbo and core stats use separate cache keys, so the
   first toggle refetches the affected endpoints.
 
-> **Note:** the **↻ Refresh** button re-reads through the cache; it does *not*
-> bypass it, so it only produces network calls for entries whose TTL has already
-> expired. It will not force fresh data while entries are still within their TTL.
+- **↻ Refresh** — drops every cached player response and reloads, so it always
+  produces a fresh request set regardless of TTL. The hero constants are kept:
+  they change on patch days, not on demand.
+
+Cache entries older than 30 days are removed on startup, so match detail (cached
+for ~7 days and never otherwise revisited) does not accumulate forever.
 
 ### Supply-chain notes
 - HTTP via **`ureq`** (rustls, no OpenSSL; no tokio/hyper tree).
@@ -193,6 +197,7 @@ dota-stats-cli winrate            # overall W/L and win %
 dota-stats-cli heroes --n 5       # top N most-played heroes
 dota-stats-cli top-hero           # single most-played hero
 dota-stats-cli recent --limit 10  # recent matches with KDA
+dota-stats-cli peers --n 10       # top teammates by games played together
 dota-stats-cli widget <metric>    # one-line JSON for bars: mmr|rank|winrate|top-hero
 ```
 

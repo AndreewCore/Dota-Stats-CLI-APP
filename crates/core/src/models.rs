@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+/// Radiant occupies player slots 0-127, Dire 128-255.
+const DIRE_SLOT_START: u32 = 128;
+/// OpenDota's game_mode id for Turbo.
+const GAME_MODE_TURBO: u32 = 23;
+
 /// `/players/{id}` — profile + rank.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerResponse {
@@ -70,6 +75,35 @@ impl HeroStat {
     }
 }
 
+/// One element of `/players/{id}/peers` — a teammate you've queued with.
+/// Private profiles omit persona/avatar, so every field is optional.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Peer {
+    #[serde(default)]
+    pub account_id: u64,
+    #[serde(default)]
+    pub personaname: Option<String>,
+    #[serde(default)]
+    pub avatarfull: Option<String>,
+    #[serde(default)]
+    pub with_games: u32,
+    #[serde(default)]
+    pub with_win: u32,
+    #[serde(default)]
+    pub last_played: Option<i64>,
+}
+
+impl Peer {
+    /// Win% in the games this peer was on your team; 0 when you never teamed up.
+    pub fn with_winrate(&self) -> f64 {
+        if self.with_games == 0 {
+            0.0
+        } else {
+            self.with_win as f64 / self.with_games as f64 * 100.0
+        }
+    }
+}
+
 /// One element of `/players/{id}/matches`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchSummary {
@@ -90,7 +124,7 @@ pub struct MatchSummary {
     pub duration: u32,
     #[serde(default)]
     pub start_time: i64,
-    /// OpenDota game_mode id; 23 = Turbo.
+    /// OpenDota game_mode id.
     #[serde(default)]
     pub game_mode: Option<u32>,
     // Present only when requested via `project=` (per-hero match list).
@@ -105,13 +139,11 @@ pub struct MatchSummary {
 }
 
 impl MatchSummary {
-    /// Radiant occupies slots 0-127; Dire 128-255.
     pub fn is_radiant(&self) -> bool {
-        self.player_slot < 128
+        self.player_slot < DIRE_SLOT_START
     }
-    /// Turbo is game_mode 23.
     pub fn is_turbo(&self) -> bool {
-        self.game_mode == Some(23)
+        self.game_mode == Some(GAME_MODE_TURBO)
     }
     /// Whether the player won; None when result unknown.
     pub fn won(&self) -> Option<bool> {
@@ -136,7 +168,7 @@ pub struct Hero {
 
 impl Hero {
     /// Icon slug = internal name without the `npc_dota_hero_` prefix
-    /// (e.g. "antimage"), matching the files in `dota2_icons/`.
+    /// (e.g. "antimage"), matching the files in `app/ui/heroes/`.
     pub fn icon_slug(&self) -> &str {
         self.name.strip_prefix("npc_dota_hero_").unwrap_or(&self.name)
     }
@@ -202,7 +234,7 @@ pub struct MatchPlayer {
 
 impl MatchPlayer {
     pub fn is_radiant(&self) -> bool {
-        self.player_slot < 128
+        self.player_slot < DIRE_SLOT_START
     }
 }
 
