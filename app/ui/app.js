@@ -1,6 +1,7 @@
 // Dashboard frontend. Loaded as a file, not inline, so the app's CSP can
 // keep script-src at 'self' without relying on nonce injection.
-const invoke = window.__TAURI__.core.invoke;
+// The web builds load backend.js first, which answers the same commands in-browser.
+const invoke = window.DotaBackend ? window.DotaBackend.invoke : window.__TAURI__.core.invoke;
 const $ = (id) => document.getElementById(id);
 // Covers ' as well: these strings land in attributes, and a single-quoted
 // one elsewhere in the file would otherwise be escapable.
@@ -11,9 +12,6 @@ const r1 = (n) => (Math.round(n * 10) / 10).toFixed(1);
 const kfmt = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : r0(n);
 const fmtWhen = (ts) => ts ? new Date(ts * 1000).toLocaleString([], {
   year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-// Year dropped so two match tables fit side by side when comparing.
-const fmtWhenShort = (ts) => ts ? new Date(ts * 1000).toLocaleString([], {
-  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const fmtDay = (ts) => ts ? new Date(ts * 1000).toLocaleDateString([], {
   year: 'numeric', month: 'short', day: 'numeric' }) : '—';
 const heroIcon = (slug, cls) => slug
@@ -169,6 +167,12 @@ function fetchCompare(cmd, args) {
     ? invoke(cmd, Object.assign({ accountId: compareSelected }, args))
     : Promise.resolve(null);
 }
+// Zip the active and compared lists by position: [[main#1, cmp#1], …]. The
+// shorter list leaves `undefined` slots instead of placeholder rows — it only
+// means that player has fewer entries to show.
+function pairByPosition(main, cmp) {
+  return Array.from({ length: Math.max(main.length, cmp.length) }, (_, i) => [main[i], cmp[i]]);
+}
 
 async function loadWinrate() {
   try {
@@ -227,10 +231,12 @@ async function loadPerformance() {
     ]);
     const tiles = perfTiles(p);
     const cmp = pc ? perfTiles(pc) : null;
+    // The dots repeat the legend inside each tile: two stacked numbers would
+    // otherwise rely on colour alone to say whose is whose.
     $('performance').innerHTML = `<div class="avgs">${tiles.map(([l, v], i) =>
       `<div class="avg">
-        <div class="num${cmp ? ' main-cmp' : ''}">${v}</div>
-        ${cmp ? `<div class="num cmp">${cmp[i][1]}</div>` : ''}
+        <div class="num${cmp ? ' main-cmp' : ''}">${cmp ? '<span class="dot warm"></span>' : ''}${v}</div>
+        ${cmp ? `<div class="num cmp"><span class="dot cool"></span>${cmp[i][1]}</div>` : ''}
         <div class="lbl">${l}</div>
       </div>`).join('')}</div>`;
   } catch (e) { $('performance').innerHTML = `<p class="err">averages: ${esc(e)}</p>`; }
@@ -239,12 +245,9 @@ async function loadPerformance() {
 // One hero row. `cmp` rows use the cool palette and carry the compared
 // account so their drill-down shows that player's numbers, not the active one's.
 function heroRow(h, rank, widthPct, cmp) {
-  const rankCell = cmp
-    ? `<span class="rank">•</span>`
-    : `<span class="rank">${rank}</span>`;
   const acct = cmp && compareSelected != null ? ` data-account="${compareSelected}"` : '';
   return `<div class="hero${cmp ? ' cmp' : ''}" data-hero="${h.hero_id}"${acct}>
-    ${rankCell}
+    <span class="rank">${rank}</span>
     ${heroIcon(h.icon)}
     <div>
       <div>${esc(h.hero)} <span class="muted">· ${h.games} games</span></div>
@@ -253,41 +256,15 @@ function heroRow(h, rank, widthPct, cmp) {
     <span class="pct${cmp ? ' cmp' : ''}">${r0(h.winrate)}% <span class="chev">›</span></span>
   </div>`;
 }
-// Placeholder for a hero the other profile doesn't have in its top list.
-// That is not the same as never having played it — only that it fell outside
-// the N rows this card asked for — so it reads "—", not 0%.
-function heroMissing(h, cmp) {
-  return `<div class="hero${cmp ? ' cmp' : ''}">
-    <span class="rank">•</span>
-    ${heroIcon(h.icon)}
-    <div>
-      <div class="muted">${esc(h.hero)} <span class="muted">· not in top list</span></div>
-      <div class="meter"><span style="width:0%"></span></div>
-    </div>
-    <span class="pct muted">—</span>
-  </div>`;
-}
-// Pair the two lists by hero, not by position. Aligning main #1 against
-// compare #1 put two different heroes side by side and invited a comparison
-// that wasn't one; only the colour said whose row was whose.
+// Hero rows, interleaved by rank when comparing: active #1, compared #1,
+// active #2… Both rows of a pair show the same rank, so the pair reads as
+// "each player's Nth hero" rather than implying it is the same hero.
 // `width` maps a hero to its meter width (games-relative or winrate).
 function heroList(main, cmp, width) {
   if (!cmp) return main.map((h, i) => heroRow(h, i + 1, width(h), false)).join('');
-  const byId = new Map(cmp.map(h => [h.hero_id, h]));
-  const seen = new Set();
-  let out = '';
-  main.forEach((h, i) => {
-    out += heroRow(h, i + 1, width(h), false);
-    const c = byId.get(h.hero_id);
-    if (c) { out += heroRow(c, i + 1, width(c), true); seen.add(h.hero_id); }
-    else out += heroMissing(h, true);
-  });
-  // Heroes the compared profile has that the active one doesn't.
-  for (const c of cmp) if (!seen.has(c.hero_id)) {
-    out += heroMissing(c, false);
-    out += heroRow(c, 0, width(c), true);
-  }
-  return out;
+  return pairByPosition(main, cmp).map(([m, c], i) => `<div class="pair">
+    ${m ? heroRow(m, i + 1, width(m), false) : ''}${c ? heroRow(c, i + 1, width(c), true) : ''}
+  </div>`).join('');
 }
 
 async function loadHeroes() {
@@ -309,36 +286,17 @@ function barRow(r, max, cmp) {
     <span class="meta">${r0(r.winrate)}% · ${r.games}g</span>
   </div>`;
 }
-function barMissing(label, cmp) {
-  return `<div class="bar${cmp ? ' cmp' : ''}">
-    <span>${esc(label)}</span>
-    <div class="track2"><div class="fill${cmp ? ' cmp' : ''}" style="width:0%"></div></div>
-    <span class="meta muted">— · 0g</span>
-  </div>`;
-}
 function barRows(rows) {
   const max = Math.max(1, ...rows.map(r => r.games));
   return rows.map(r => barRow(r, max, false)).join('');
 }
-// Compare bars, aligned by label: for each label show the main bar then the
-// compare bar (interleaved), e.g. Safelane(main), Safelane(compare), Offlane…
+// Compare bars, interleaved by position like the hero lists. Each bar keeps
+// its own label because each player's Nth role or mode can differ.
 function barRowsCompare(main, cmp) {
-  const byLabel = new Map(cmp.map(r => [r.label, r]));
   const max = Math.max(1, ...main.map(r => r.games), ...cmp.map(r => r.games));
-  const seen = new Set();
-  let out = '';
-  for (const r of main) {
-    out += barRow(r, max, false);
-    const cr = byLabel.get(r.label);
-    if (cr) { out += barRow(cr, max, true); seen.add(r.label); }
-    else out += barMissing(r.label, true);
-  }
-  // Labels the compare user has but the main user doesn't.
-  for (const cr of cmp) if (!seen.has(cr.label)) {
-    out += barMissing(cr.label, false);
-    out += barRow(cr, max, true);
-  }
-  return out;
+  return pairByPosition(main, cmp).map(([m, c]) => `<div class="pair">
+    ${m ? barRow(m, max, false) : ''}${c ? barRow(c, max, true) : ''}
+  </div>`).join('');
 }
 function bkGroup(title, main, cmp) {
   if (!main.length && !(cmp && cmp.length)) return '';
@@ -371,26 +329,31 @@ async function loadTopWinrate() {
   } catch (e) { $('topwr').innerHTML = `<p class="err">top winrate: ${esc(e)}</p>`; }
 }
 
-/// One match table. In compare mode the dates lose the year and the KDA and
-/// Length columns are hidden by CSS, so two tables fit the card's width.
-function recentTable(ms, compact, accountId) {
-  const when = compact ? fmtWhenShort : fmtWhen;
-  const acct = accountId != null ? ` data-account="${accountId}"` : '';
-  const rows = ms.map(m => {
-    const tag = m.is_turbo ? '<span class="turbo-tag">Turbo</span>' : '';
-    return `<tr data-match="${m.match_id}"${acct}>
-      <td>${resTag(m.won)}</td>
-      <td class="muted">${esc(when(m.start_time))}</td>
-      <td><span class="hcell">${heroIcon(m.icon)}${esc(m.hero)}${tag}</span></td>
-      <td>${m.kills}/${m.deaths}/${m.assists}</td>
-      <td class="col-kda">${r1(m.kda)}</td>
-      <td class="muted col-len">${r0(m.duration / 60)}m</td>
-    </tr>`;
-  }).join('');
-  return `<table>
+// One match row. Compared rows carry that account so the scoreboard
+// highlights the compared player instead of the active one.
+function recentRow(m, cmp) {
+  const acct = cmp && compareSelected != null ? ` data-account="${compareSelected}"` : '';
+  const tag = m.is_turbo ? '<span class="turbo-tag">Turbo</span>' : '';
+  return `<tr class="${cmp ? 'cmp' : ''}" data-match="${m.match_id}"${acct}>
+    <td>${resTag(m.won)}</td>
+    <td class="muted">${esc(fmtWhen(m.start_time))}</td>
+    <td><span class="hcell">${heroIcon(m.icon)}${esc(m.hero)}${tag}</span></td>
+    <td>${m.kills}/${m.deaths}/${m.assists}</td>
+    <td class="col-kda">${r1(m.kda)}</td>
+    <td class="muted col-len">${r0(m.duration / 60)}m</td>
+  </tr>`;
+}
+// Match table. When comparing, both players' Nth most recent games share one
+// <tbody>: a row group is the only element a table lets the pair divider hang off.
+function recentTable(ms, mc) {
+  const body = mc
+    ? pairByPosition(ms, mc).map(([m, c]) =>
+        `<tbody class="pair">${m ? recentRow(m, false) : ''}${c ? recentRow(c, true) : ''}</tbody>`).join('')
+    : `<tbody>${ms.map(m => recentRow(m, false)).join('')}</tbody>`;
+  return `<div class="table-scroll"><table${mc ? ' class="cmp-table"' : ''}>
     <thead><tr><th>Res</th><th>Date / Time</th><th>Hero</th><th>K/D/A</th>
       <th class="col-kda">KDA</th><th class="col-len">Length</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+    ${body}</table></div>`;
 }
 
 async function loadRecent() {
@@ -400,15 +363,9 @@ async function loadRecent() {
       invoke('get_recent', args),
       fetchCompare('get_recent', args),
     ]);
-    if (!mc) { $('recent').innerHTML = recentTable(ms, false); return; }
-    const col = (list, cmp, label) => `<div class="recent-col">
-      <div class="who"><span class="dot ${cmp ? 'cool' : 'warm'}"></span>${esc(label)}</div>
-      ${list.length ? recentTable(list, true, cmp ? compareSelected : null) : '<p class="muted">No matches.</p>'}
-    </div>`;
-    $('recent').innerHTML = `<div class="recent-compare">
-      ${col(ms, false, mainLabelText())}
-      ${col(mc, true, compareLabel)}
-    </div>`;
+    $('recent').innerHTML = ms.length || (mc && mc.length)
+      ? recentTable(ms, mc)
+      : '<p class="muted">No matches.</p>';
   } catch (e) { $('recent').innerHTML = `<p class="err">recent: ${esc(e)}</p>`; }
 }
 
@@ -423,11 +380,14 @@ function peerRow(p, cmp) {
     <span class="ppct">${r0(p.winrate)}%</span>
   </div>`;
 }
-// Render a peer list, or an empty-state note.
-function peerList(list, cmp) {
-  return list.peers.length
-    ? list.peers.map(p => peerRow(p, cmp)).join('')
-    : '<p class="muted">No teammate data.</p>';
+// Teammate rows, interleaved by position when comparing (each player's Nth
+// most frequent teammate together), or an empty-state note.
+function peerList(ps, pc) {
+  if (!ps.peers.length && !(pc && pc.peers.length)) return '<p class="muted">No teammate data.</p>';
+  if (!pc) return ps.peers.map(p => peerRow(p, false)).join('');
+  return pairByPosition(ps.peers, pc.peers).map(([m, c]) => `<div class="pair">
+    ${m ? peerRow(m, false) : ''}${c ? peerRow(c, true) : ''}
+  </div>`).join('');
 }
 
 async function loadPeers() {
@@ -437,15 +397,7 @@ async function loadPeers() {
       invoke('get_peers', { n: 10 }),
       fetchCompare('get_peers', { n: 10 }),
     ]);
-    if (!pc) { $('peers').innerHTML = peerList(ps, false); return; }
-    const col = (list, cmp, label) => `<div>
-      <div class="who"><span class="dot ${cmp ? 'cool' : 'warm'}"></span>${esc(label)}</div>
-      ${peerList(list, cmp)}
-    </div>`;
-    $('peers').innerHTML = `<div class="recent-compare peers-compare">
-      ${col(ps, false, mainLabelText())}
-      ${col(pc, true, compareLabel)}
-    </div>`;
+    $('peers').innerHTML = peerList(ps, pc);
   } catch (e) { $('peers').innerHTML = `<p class="err">peers: ${esc(e)}</p>`; }
 }
 
@@ -533,8 +485,8 @@ async function renderHero(heroId, accountId) {
   </tr>`).join('');
   const table = d.matches.length ? `
     <div class="teamtitle">Recent matches on this hero</div>
-    <table><thead><tr><th>Res</th><th>Date / Time</th><th>K/D/A</th><th>KDA</th><th>GPM</th><th>XPM</th><th>Length</th></tr></thead>
-    <tbody>${rows}</tbody></table>` : '<p class="muted">No recent matches.</p>';
+    <div class="table-scroll"><table><thead><tr><th>Res</th><th>Date / Time</th><th>K/D/A</th><th>KDA</th><th>GPM</th><th>XPM</th><th>Length</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>` : '<p class="muted">No recent matches.</p>';
   const overview = `<div class="ov">
     <div class="wheel">${donutSVG(d.winrate, 'WIN RATE', 116)}
       <div class="muted" style="font-size:12px;margin-top:2px">${d.win} / ${d.games} won</div></div>
@@ -593,8 +545,8 @@ function teamTable(players, side, label, win) {
   const rows = players.filter(p => p.radiant === side).map(scoreRow).join('');
   const tag = win === true ? ' · Victory' : win === false ? ' · Defeat' : '';
   return `<div class="teamtitle ${side ? 'radiant' : 'dire'}">${label}${tag}</div>
-    <table><thead><tr><th>Hero</th><th>Player</th><th>Lv</th><th>K/D/A</th><th>Net</th><th>GPM</th><th>XPM</th><th>LH/DN</th><th>Dmg</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+    <div class="table-scroll"><table><thead><tr><th>Hero</th><th>Player</th><th>Lv</th><th>K/D/A</th><th>Net</th><th>GPM</th><th>XPM</th><th>LH/DN</th><th>Dmg</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 async function renderMatch(matchId, accountId) {
   const m = await invoke('get_match_detail', { matchId, accountId });

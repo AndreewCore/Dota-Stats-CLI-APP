@@ -240,7 +240,7 @@ tr.me:hover { background: rgba(201,162,75,.16); }
 .cmp-legend { display: none; align-items: center; gap: 8px; font-size: 12px; color: var(--muted);
               width: 100%; justify-content: flex-end; }
 .cmp-legend.on { display: flex; }
-.cmp-legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
 .dot.warm { background: linear-gradient(135deg, var(--red), var(--gold)); }
 .dot.cool { background: linear-gradient(135deg, var(--blue), var(--purple)); }
 
@@ -249,36 +249,79 @@ tr.me:hover { background: rgba(201,162,75,.16); }
 .hero.cmp .rank { color: var(--blue-soft); }
 .meter > span.cmp { background: linear-gradient(90deg, var(--blue), var(--purple)); }
 .hero .pct.cmp { color: var(--blue-soft); }
-.bar.cmp span:first-child { color: var(--muted); }
+.bar.cmp span:first-child { color: var(--blue-soft); }
 .bar .fill.cmp { background: linear-gradient(90deg, var(--blue), var(--blue-soft)); }
 .avg .num.main-cmp { color: var(--gold); }
 .avg .num.cmp { color: var(--blue-soft); font-size: 15px; margin-top: 3px; }
+/* Keep the dot on the value's line: long values like K/D/A would push it above. */
+.avg .num.main-cmp, .avg .num.cmp { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.avg .num .dot { width: 7px; height: 7px; }
 .wr-compare { display: flex; flex-direction: column; gap: 16px; }
 .wr-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .wr-row .who { display: flex; align-items: center; gap: 7px; font-size: 12px;
                min-width: 96px; font-weight: 600; }
 
-/* ---- side-by-side recent matches (compare mode) ---- */
-.recent-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
-.recent-col .who { display: flex; align-items: center; gap: 7px; font-size: 12px;
-                   font-weight: 600; margin-bottom: 8px; }
-.recent-col .who .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-/* Two tables in the width of one: drop the least load-bearing columns. */
-.recent-compare th.col-len, .recent-compare td.col-len,
-.recent-compare th.col-kda, .recent-compare td.col-kda { display: none; }
-/* Stacking beats an unreadable squeeze once the columns get too narrow. */
-@media (max-width: 1100px) { .recent-compare { grid-template-columns: 1fr; } }
+/* ---- interleaved pairs (compare mode) ---- */
+/* Divide pairs, not rows, so each player's Nth entry reads as one unit. */
+.pair + .pair { border-top: 1px solid var(--line); }
+.cmp-table tbody.pair + tbody.pair { border-top: 2px solid var(--line); }
+.cmp-table tbody.pair tr + tr td { border-top-color: transparent; }
+/* A table row can't take the dot legend, so an edge stripe marks whose it is. */
+.cmp-table tbody tr td:first-child { box-shadow: inset 3px 0 var(--gold); }
+.cmp-table tbody tr.cmp td:first-child { box-shadow: inset 3px 0 var(--blue-soft); }
 
 /* ---- played-with (peers) ---- */
 .peer { display: grid; grid-template-columns: 28px 1fr auto; align-items: center;
         gap: 11px; padding: 6px 4px; }
 .peer .pavatar { width: 28px; height: 28px; border-radius: 50%; object-fit: cover;
                  background: var(--panel-3); }
-.peer .pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Reset size and weight: the class is shared with the profile card's 23px name. */
+.peer .pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+               font-size: 14px; font-weight: 400; }
 .peer .pname .muted { font-size: 12px; }
 .peer .ppct { font-variant-numeric: tabular-nums; color: var(--gold);
               font-size: 13px; font-weight: 600; }
 .peer.cmp .ppct { color: var(--blue-soft); }
-.peers-compare .who { display: flex; align-items: center; gap: 7px; font-size: 12px;
-                      font-weight: 600; margin-bottom: 8px; }
-.peers-compare .who .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+/* ---- download buttons (web builds only; web.js reveals them) ---- */
+.getapp { display: flex; gap: 10px; flex-wrap: wrap; }
+/* `hidden` alone loses to the display above, and the desktop app must never show these. */
+.getapp[hidden], .getapp .btn[hidden] { display: none; }
+a.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        background: var(--panel-2); color: var(--text); text-decoration: none; cursor: pointer;
+        border: 1px solid var(--line); padding: 9px 15px; border-radius: 8px; font-size: 13px;
+        transition: border-color .12s, background .12s; }
+a.btn:hover { border-color: var(--red); background: var(--panel-3); }
+
+/* ---- small screens ---- */
+.table-scroll { overflow-x: auto; }
+/* Grid children default to min-width:auto, which lets long names widen the page. */
+.hero > div, .peer > div { min-width: 0; }
+@media (max-width: 700px) {
+  body { padding: 16px 14px 40px; }
+  .topbar { flex-direction: column; align-items: stretch; }
+  .controls { flex-wrap: wrap; justify-content: space-between; }
+  .getapp { width: 100%; }
+  .getapp .btn { flex: 1; }
+  .profile { padding: 14px 16px; }
+  #profileMain { width: 100%; }
+  .pcontrols { margin-left: 0; width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .pcontrols #editUsers, .pcontrols .cmp-legend { grid-column: 1 / -1; }
+  .userselect { max-width: none; width: 100%; }
+  .cmp-legend { justify-content: flex-start; flex-wrap: wrap; }
+  .card-head .search-wrap, .card-head .search, .suggest { width: 100%; }
+  .wr-wrap, .wr-row { gap: 14px; flex-wrap: wrap; }
+  .wr-row .who { min-width: 0; width: 100%; }
+  #overlay { padding: 0; }
+  .modal { border-radius: 0; min-height: 100%; }
+  .mhead { flex-wrap: wrap; }
+  .ov .grow { min-width: 0; }
+}
+@media (max-width: 560px) {
+  .avgs { grid-template-columns: repeat(2, 1fr); }
+  .bar { grid-template-columns: 70px 1fr 78px; gap: 8px; font-size: 12px; }
+  #recent .col-kda, #recent .col-len { display: none; }
+  .hero { gap: 9px; font-size: 13px; }
+  table { font-size: 12.5px; }
+  th, td { padding: 7px 6px; }
+}
