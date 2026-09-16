@@ -6,6 +6,7 @@ pub mod client;
 pub mod config;
 pub mod display;
 pub mod error;
+pub mod history;
 pub mod models;
 
 pub use client::OpenDota;

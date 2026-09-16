@@ -424,9 +424,52 @@ function openHero(heroId, accountId) {
   pushView(() => renderHero(heroId, accountId));
 }
 
+/* ---------------- OpenDota loading indicator ---------------- */
+// Cached answers resolve within a few ms. Waiting this long before showing the
+// indicator keeps cache hits from flashing it on every re-render.
+const BUSY_DELAY_MS = 150;
+const API_IDLE_TEXT = 'via OpenDota · cached locally';
+let pendingLoads = 0;
+
+/** Show or hide the page-wide "fetching" state (top bar + header status). */
+function setFetching(on) {
+  document.body.classList.toggle('fetching', on);
+  $('apiStatusText').textContent = on ? 'Fetching from OpenDota…' : API_IDLE_TEXT;
+}
+
+/**
+ * Run `loader`, marking the panel around element `id` (if any) and the page as
+ * busy while it is still pending after BUSY_DELAY_MS. Pending counts, not
+ * booleans, because a quick Turbo double-toggle overlaps two loads per panel.
+ */
+async function trackLoad(id, loader) {
+  const panel = id ? $(id).closest('.card, .profile') : null;
+  if (panel) panel.dataset.pending = Number(panel.dataset.pending || 0) + 1;
+  pendingLoads++;
+  const timer = setTimeout(() => {
+    if (panel) panel.classList.add('busy');
+    setFetching(true);
+  }, BUSY_DELAY_MS);
+  try {
+    return await loader();
+  } finally {
+    clearTimeout(timer);
+    if (panel && --panel.dataset.pending === 0) panel.classList.remove('busy');
+    if (--pendingLoads === 0) setFetching(false);
+  }
+}
+
 // Profile/rank are mode-independent; the Turbo toggle only reloads stats.
-function loadStats() { loadWinrate(); loadPerformance(); loadHeroes(); loadBreakdowns(); loadPeers(); loadTopWinrate(); loadRecent(); }
-function loadAll() { loadProfile(); loadHeroList(); loadStats(); }
+function loadStats() {
+  trackLoad('winrate', loadWinrate);
+  trackLoad('performance', loadPerformance);
+  trackLoad('heroes', loadHeroes);
+  trackLoad('breakdowns', loadBreakdowns);
+  trackLoad('peers', loadPeers);
+  trackLoad('topwr', loadTopWinrate);
+  trackLoad('recent', loadRecent);
+}
+function loadAll() { trackLoad('profileMain', loadProfile); trackLoad(null, loadHeroList); loadStats(); }
 
 /* ---------------- modal view stack ---------------- */
 const overlay = $('overlay'), modal = $('modal');
@@ -436,8 +479,8 @@ async function pushView(fn) { stack.push(fn); await renderTop(); }
 async function popView() { stack.pop(); stack.length ? renderTop() : closeModal(); }
 async function renderTop() {
   overlay.classList.add('open');
-  modal.innerHTML = '<div class="loading">Loading…</div>';
-  try { modal.innerHTML = await stack[stack.length - 1](); }
+  modal.innerHTML = '<div class="loading"><span class="spinner" aria-hidden="true"></span>Fetching from OpenDota…</div>';
+  try { modal.innerHTML = await trackLoad(null, stack[stack.length - 1]); }
   catch (e) { modal.innerHTML = `<div class="mbody err">${esc(e)}</div>`; }
 }
 function mHead(iconHtml, title, sub, extra) {
@@ -760,13 +803,13 @@ function selectRecentHero(h) {
   $('recentTitle').innerHTML =
     `Recent matches <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">· ${esc(h.hero)}</span>` +
     `<span class="filter-clear" id="clearFilter" title="Show all heroes">✕</span>`;
-  loadRecent();
+  trackLoad('recent', loadRecent);
 }
 function clearFilter() {
   recentHeroFilter = null;
   $('heroSearch').value = '';
   $('recentTitle').textContent = 'Recent matches';
-  loadRecent();
+  trackLoad('recent', loadRecent);
 }
 setupHeroSearch($('heroSearch'), $('heroSuggest'), {
   onSelect: selectRecentHero,
@@ -830,7 +873,7 @@ $('compareSelect').addEventListener('change', (e) => {
   compareSelected = v ? Number(v) : null;
   compareLabel = compareSelected != null ? e.target.selectedOptions[0].text.replace(/^vs\s+/, '') : '';
   updateCompareLegend();
-  loadProfile();
+  trackLoad('profileMain', loadProfile);
   loadStats();
 });
 $('editUsers').addEventListener('click', openUsersEditor);

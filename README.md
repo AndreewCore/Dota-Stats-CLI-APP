@@ -39,28 +39,37 @@ the on-disk TTL cache in `~/.cache/dota-stats/`: a network `GET` to
 endpoint is needed, or after its cached entry has expired. A fresh cache entry
 is served locally with no network traffic.
 
-Cache entries are keyed per `account_id` (and separately for Turbo vs. core
-stats), so navigating tabs, opening hero/match modals, and re-rendering views
-reuse the cache and hit the network zero times while entries are still fresh.
+Cache entries are keyed per `account_id`, so navigating tabs, opening
+hero/match modals, and re-rendering views reuse the cache and hit the network
+zero times while entries are still fresh.
 
-Per-endpoint TTLs:
+Most of the dashboard is computed locally from **one** download: the player's
+full match history (`/players/{id}/matches`, only the needed fields). Win-loss,
+heroes, highest win rate, career averages, breakdowns, recent matches and the
+hero drill-down are all derived from it (`crates/core/src/history.rs`) instead
+of calling OpenDota's `/wl`, `/heroes`, `/totals` and `/counts`, each of which
+rescans the history server-side. The results match those endpoints exactly,
+including OpenDota's `significant` filter, which is how Turbo is excluded.
+Only the profile, teammates (`/peers`) and match scoreboards still need their
+own requests.
+
+TTLs:
 
 | Data | TTL |
 |------|-----|
 | Profile / MMR / rank | 6 hours |
-| Win-loss, totals, counts (breakdowns) | 30 min |
-| Heroes | 1 hour |
-| Recent / hero matches | 10 min |
+| Match history (every derived stat) | 10 min |
+| Teammates | 30 min |
 | Match detail + hero constants | ~7 days |
 
 A real request set is therefore triggered by:
-- **First load** after the cache is cold — fans out to the ~7–8 endpoints the
-  dashboard needs (only those whose entries are missing/expired).
+- **First load** after the cache is cold — 3 requests per profile (profile,
+  match history, teammates) plus the hero constants once.
 - **A cache entry aging past its TTL**, on the next view that needs it.
 - **Switching profiles** — a different `account_id` means new cache keys, so
   that player's data is fetched.
-- **Toggling Turbo** — Turbo and core stats use separate cache keys, so the
-  first toggle refetches the affected endpoints.
+- Toggling Turbo is **not** a trigger: both variants come from the same
+  history, filtered locally.
 
 - **↻ Refresh** — drops every cached player response and reloads, so it always
   produces a fresh request set regardless of TTL. The hero constants are kept:
@@ -204,8 +213,9 @@ in `web/src/web.js`.
 
 **Rate limits:** without a key, OpenDota allows 60 requests per minute and 3000
 per day **per IP**. Requests leave from each visitor's browser, so every visitor
-has their own budget; a cold dashboard costs about 8 requests (about 16 while
-comparing). Never put an API key in the web build — it would be public.
+has their own budget; a cold dashboard costs about 4 requests (about 7 while
+comparing), and toggling Turbo costs none. The match history is stored as
+compact arrays so two long careers still fit the browser's storage quota. Never put an API key in the web build — it would be public.
 
 **Installing:** Chrome, Edge and Android browsers install through the button.
 iOS Safari only installs via *Share → Add to Home Screen*, and Firefox on

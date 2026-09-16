@@ -1,10 +1,12 @@
 use crate::cache;
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::history::{self, HistoryMatch};
 use crate::models::*;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const BASE: &str = "https://api.opendota.com/api";
 
@@ -28,7 +30,6 @@ fn agent() -> &'static ureq::Agent {
 /// TTLs per endpoint — balances freshness against OpenDota's rate limits.
 const TTL_PROFILE: Duration = Duration::from_secs(6 * 3600);
 const TTL_WL: Duration = Duration::from_secs(30 * 60);
-const TTL_HEROES: Duration = Duration::from_secs(60 * 60);
 const TTL_MATCHES: Duration = Duration::from_secs(10 * 60);
 const TTL_CONSTANTS: Duration = Duration::from_secs(7 * 24 * 3600);
 
@@ -37,15 +38,15 @@ pub struct OpenDota {
     api_key: Option<String>,
 }
 
-/// OpenDota aggregations default to `significant=1`, which excludes Turbo (and
-/// other non-standard modes). `significant=0` includes everything.
-fn significant(include_turbo: bool) -> u8 {
-    if include_turbo { 0 } else { 1 }
-}
+/// Memo slot for one account's parsed history, tagged with the cache file's
+/// stamp it was read from. Slots are never removed: one per saved profile.
+type HistorySlot = Arc<Mutex<Option<(SystemTime, Arc<Vec<HistoryMatch>>)>>>;
 
-/// Cache-key suffix so Turbo and core stats never collide on disk.
-fn turbo_key(include_turbo: bool) -> &'static str {
-    if include_turbo { "_turbo" } else { "_core" }
+/// The shared memo slot for `account_id`, created on first use.
+fn history_slot(account_id: u64) -> HistorySlot {
+    static SLOTS: OnceLock<Mutex<HashMap<u64, HistorySlot>>> = OnceLock::new();
+    let slots = SLOTS.get_or_init(|| Mutex::new(HashMap::new()));
+    slots.lock().unwrap_or_else(|e| e.into_inner()).entry(account_id).or_default().clone()
 }
 
 impl OpenDota {
@@ -89,40 +90,66 @@ impl OpenDota {
         self.get_json(&format!("/players/{id}"), &format!("player_{id}"), TTL_PROFILE)
     }
 
+    /// The player's whole match history, newest first, with every field the
+    /// derived stats need. Unfiltered (`significant=0`): the Turbo toggle is
+    /// applied locally by [`history::select`], so one download serves both.
+    ///
+    /// Memoized per account for as long as its cache file is unchanged. The
+    /// dashboard derives six panels from this list at once; without the memo
+    /// each would re-read and re-parse megabytes of JSON, and on a cold cache
+    /// all six would download it in parallel. Holding the account's slot for
+    /// the whole fetch makes the others wait for that one request instead.
+    pub fn match_history(&self) -> Result<Arc<Vec<HistoryMatch>>> {
+        let id = self.account_id;
+        let key = format!("history_{id}");
+        let slot = history_slot(id);
+        let mut memo = slot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((stamp, matches)) = memo.as_ref() {
+            if cache::fresh_stamp(&key, TTL_MATCHES) == Some(*stamp) {
+                return Ok(matches.clone());
+            }
+        }
+        let project: String = history::PROJECT_FIELDS.iter().map(|f| format!("&project={f}")).collect();
+        let path = format!("/players/{id}/matches?significant=0{project}");
+        let matches: Arc<Vec<HistoryMatch>> = Arc::new(self.get_json(&path, &key, TTL_MATCHES)?);
+        // Reading the stamp after the write pins the memo to exactly this file:
+        // a Refresh (which deletes it) or a newer download invalidates it.
+        *memo = cache::fresh_stamp(&key, TTL_MATCHES).map(|stamp| (stamp, matches.clone()));
+        Ok(matches)
+    }
+
+    /// Win/loss, as `/players/{id}/wl` reports it.
     pub fn win_loss(&self, include_turbo: bool) -> Result<WinLoss> {
-        let id = self.account_id;
-        let sig = significant(include_turbo);
-        let key = format!("wl_{id}{}", turbo_key(include_turbo));
-        self.get_json(&format!("/players/{id}/wl?significant={sig}"), &key, TTL_WL)
+        let all = self.match_history()?;
+        Ok(history::win_loss(&history::select(&all, include_turbo)))
     }
 
-    /// Heroes played, sorted by games desc (OpenDota already returns this order).
+    /// Heroes played, sorted by games desc, as `/players/{id}/heroes` reports them.
     pub fn heroes(&self, include_turbo: bool) -> Result<Vec<HeroStat>> {
-        let id = self.account_id;
-        let sig = significant(include_turbo);
-        let key = format!("heroes_{id}{}", turbo_key(include_turbo));
-        self.get_json(&format!("/players/{id}/heroes?significant={sig}"), &key, TTL_HEROES)
+        let all = self.match_history()?;
+        Ok(history::hero_stats(&history::select(&all, include_turbo)))
     }
 
+    /// The `limit` most recent matches.
     pub fn recent_matches(&self, limit: u32, include_turbo: bool) -> Result<Vec<MatchSummary>> {
-        let id = self.account_id;
-        let sig = significant(include_turbo);
-        let path = format!("/players/{id}/matches?limit={limit}&significant={sig}");
-        let key = format!("matches_{id}_{limit}{}", turbo_key(include_turbo));
-        self.get_json(&path, &key, TTL_MATCHES)
+        let all = self.match_history()?;
+        Ok(history::select(&all, include_turbo)
+            .into_iter()
+            .take(limit as usize)
+            .map(HistoryMatch::summary)
+            .collect())
     }
 
-    /// Recent matches for a single hero, enriched with per-game economy fields
-    /// (requested via `project=`), for the hero drill-down.
+    /// The `limit` most recent matches on one hero, with per-game economy
+    /// fields, for the hero drill-down.
     pub fn hero_matches(&self, hero_id: u32, limit: u32, include_turbo: bool) -> Result<Vec<MatchSummary>> {
-        let id = self.account_id;
-        let sig = significant(include_turbo);
-        const PROJ: &str = "&project=start_time&project=duration&project=kills&project=deaths&project=assists\
-&project=gold_per_min&project=xp_per_min&project=last_hits&project=hero_damage&project=game_mode";
-        let path =
-            format!("/players/{id}/matches?hero_id={hero_id}&limit={limit}&significant={sig}{PROJ}");
-        let key = format!("heromatches_{id}_{hero_id}_{limit}{}", turbo_key(include_turbo));
-        self.get_json(&path, &key, TTL_MATCHES)
+        let all = self.match_history()?;
+        Ok(history::select(&all, include_turbo)
+            .into_iter()
+            .filter(|m| m.hero_id == Some(hero_id))
+            .take(limit as usize)
+            .map(HistoryMatch::summary)
+            .collect())
     }
 
     /// `/matches/{id}` — full match detail. Finished matches are immutable, so
@@ -135,20 +162,16 @@ impl OpenDota {
         )
     }
 
-    /// `/players/{id}/totals` — career sums per stat, for averages.
+    /// Career sums per stat, as `/players/{id}/totals` reports them.
     pub fn totals(&self, include_turbo: bool) -> Result<Vec<TotalField>> {
-        let id = self.account_id;
-        let sig = significant(include_turbo);
-        let key = format!("totals_{id}{}", turbo_key(include_turbo));
-        self.get_json(&format!("/players/{id}/totals?significant={sig}"), &key, TTL_WL)
+        let all = self.match_history()?;
+        Ok(history::totals(&history::select(&all, include_turbo)))
     }
 
-    /// `/players/{id}/counts` — games/win grouped by lane, game mode, etc.
+    /// Games/win by lane role and game mode, as `/players/{id}/counts` reports them.
     pub fn counts(&self, include_turbo: bool) -> Result<Counts> {
-        let id = self.account_id;
-        let sig = significant(include_turbo);
-        let key = format!("counts_{id}{}", turbo_key(include_turbo));
-        self.get_json(&format!("/players/{id}/counts?significant={sig}"), &key, TTL_WL)
+        let all = self.match_history()?;
+        Ok(history::counts(&history::select(&all, include_turbo)))
     }
 
     /// `/players/{id}/peers` — teammates, with games/wins played together.
@@ -178,7 +201,7 @@ impl OpenDota {
 
 /// Hero constants keyed by id, so a lookup doesn't rebuild a map per call.
 pub struct HeroIndex {
-    by_id: std::collections::HashMap<u32, (String, String)>,
+    by_id: HashMap<u32, (String, String)>,
 }
 
 impl HeroIndex {
