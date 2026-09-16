@@ -492,13 +492,15 @@ Command:  dota-stats winrate
   2. run() loads config (your account_id) and builds an OpenDota client.
   3. It matches "winrate" and calls cmd_winrate.
   4. cmd_winrate calls api.win_loss().
-  5. core's win_loss() calls get_json -> get_raw with key "wl_12345678",
-     ttl 30 min.
-  6. get_raw checks the cache file ~/.cache/dota-stats/wl_12345678.json.
+  5. core's win_loss() calls match_history(), which calls get_json ->
+     get_raw with key "history_12345678", ttl 10 min.
+  6. get_raw checks the cache file ~/.cache/dota-stats/history_12345678.json.
         - Fresh? return its contents (no network).
-        - Missing/old? HTTPS GET https://api.opendota.com/api/players/12345678/wl,
-          save the JSON to that file, return it.
-  7. serde parses the JSON text into a WinLoss struct { win, lose }.
+        - Missing/old? HTTPS GET https://api.opendota.com/api/players/12345678/matches
+          (every game, only the fields we use), save the JSON, return it.
+  7. serde parses it into a list of HistoryMatch rows; history::select keeps
+     the games the Turbo setting counts, and history::win_loss tallies them
+     into a WinLoss struct { win, lose }.
   8. cmd_winrate computes winrate() and prints:  223W 276L  (44.7% over 499)
 
 The first run touches the network; subsequent runs within the TTL are instant
