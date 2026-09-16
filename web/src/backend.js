@@ -2,18 +2,22 @@
 // dashboard (app/ui) runs as a static site. Every command returns the same JSON
 // shape as its Rust twin; keep the two in step when either changes.
 //
-// Ported from crates/core: client.rs (endpoints, TTLs, cache keys), models.rs
-// and display.rs (derived fields), config.rs (profile store).
+// Ported from crates/core: client.rs (endpoints, TTLs, cache keys), history.rs
+// (stats derived from the match history), models.rs and display.rs (derived
+// fields), config.rs (profile store).
 (function () {
   'use strict';
 
   const BASE = 'https://api.opendota.com/api';
   const MIN = 60e3, HOUR = 60 * MIN;
-  const TTL = { profile: 6 * HOUR, wl: 30 * MIN, heroes: HOUR, matches: 10 * MIN, constants: 7 * 24 * HOUR };
+  const TTL = { profile: 6 * HOUR, wl: 30 * MIN, matches: 10 * MIN, constants: 7 * 24 * HOUR };
   // Mirrors cache::prune: long-TTL entries would otherwise pile up forever.
   const MAX_ENTRY_AGE = 30 * 24 * HOUR;
   const CACHE_PREFIX = 'dota-stats.cache.';
   const USERS_KEY = 'dota-stats.users';
+  // Per-endpoint keys from before stats were derived from one history. They
+  // would squat the storage quota the history needs until their 30-day prune.
+  const LEGACY_KEYS = /^(wl|heroes|matches|heromatches|totals|counts)_/;
   const DIRE_SLOT_START = 128;
   const GAME_MODE_TURBO = 23;
 
@@ -31,6 +35,9 @@
     let entry = memory.get(key);
     if (!entry) {
       try { entry = JSON.parse(localStorage.getItem(CACHE_PREFIX + key)); } catch { entry = null; }
+      // Keep the parsed copy: a dashboard render reads the same history from
+      // six commands, and re-parsing it from storage each time is the slow part.
+      if (entry) memory.set(key, entry);
     }
     return entry && Date.now() - entry.t <= ttl ? entry.body : null;
   }
@@ -39,7 +46,7 @@
   function cachePut(key, body, persist) {
     const entry = { t: Date.now(), body };
     if (persist) {
-      try { localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry)); return; } catch { /* quota: fall through */ }
+      try { localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(entry)); } catch { /* quota: memory only */ }
     }
     memory.set(key, entry);
   }
@@ -62,7 +69,7 @@
     for (const k of storedKeys()) {
       try {
         const e = JSON.parse(localStorage.getItem(CACHE_PREFIX + k));
-        if (!e || now - e.t > MAX_ENTRY_AGE) localStorage.removeItem(CACHE_PREFIX + k);
+        if (!e || now - e.t > MAX_ENTRY_AGE || LEGACY_KEYS.test(k)) localStorage.removeItem(CACHE_PREFIX + k);
       } catch { localStorage.removeItem(CACHE_PREFIX + k); }
     }
   }
@@ -73,8 +80,11 @@
     for (const k of [...memory.keys()]) if (!k.startsWith('const_')) memory.delete(k);
   }
 
-  /** GET `path` as JSON through the cache. Errors are strings, as Tauri delivers them. */
-  function getJson(path, key, ttl, persist = true) {
+  /**
+   * GET `path` as JSON through the cache. Errors are strings, as Tauri delivers them.
+   * `pack` reshapes the body before it is cached, for payloads too big to store as-is.
+   */
+  function getJson(path, key, ttl, persist = true, pack = (body) => body) {
     const hit = cacheGet(key, ttl);
     if (hit !== null) return Promise.resolve(hit);
     if (inflight.has(key)) return inflight.get(key);
@@ -86,7 +96,7 @@
       if (res.status === 404) throw 'not found on OpenDota — check the account id, or the profile may be private';
       if (!res.ok) throw `http error: ${res.status} ${res.statusText}`;
       let body;
-      try { body = await res.json(); } catch (e) { throw `parse error: ${e.message || e}`; }
+      try { body = pack(await res.json()); } catch (e) { throw `parse error: ${e.message || e}`; }
       cachePut(key, body, persist);
       return body;
     })();
@@ -98,27 +108,104 @@
 
   /* ---------------- OpenDota client (client.rs) ---------------- */
 
-  // OpenDota aggregations default to significant=1, which excludes Turbo.
-  const sig = (turbo) => (turbo ? 0 : 1);
-  const turboKey = (turbo) => (turbo ? '_turbo' : '_core');
-  const HERO_MATCH_PROJECT = ['start_time', 'duration', 'kills', 'deaths', 'assists',
-    'gold_per_min', 'xp_per_min', 'last_hits', 'hero_damage', 'game_mode']
-    .map((f) => `&project=${f}`).join('');
+  // Everything history.rs reads. A field missing here comes back absent and
+  // silently aggregates to zero.
+  const HISTORY_FIELDS = ['match_id', 'player_slot', 'radiant_win', 'hero_id', 'start_time', 'duration',
+    'game_mode', 'lobby_type', 'lane_role', 'kills', 'deaths', 'assists',
+    'gold_per_min', 'xp_per_min', 'last_hits', 'denies', 'hero_damage', 'tower_damage'];
+  const HISTORY_PATH = (id) =>
+    `/players/${id}/matches?significant=0${HISTORY_FIELDS.map((f) => `&project=${f}`).join('')}`;
+
+  /**
+   * History rows as positional arrays in HISTORY_FIELDS order. A long career is
+   * ~3 MB as objects, which two compared profiles would push past the ~5 MB
+   * localStorage quota; without the repeated keys it is about a quarter of that.
+   */
+  const packHistory = (rows) => rows.map((m) => HISTORY_FIELDS.map((f) => m[f] ?? null));
+
+  // Unpacked rows per packed array. The memory cache hands back the same array
+  // until it expires, so each download is unpacked once, not once per command.
+  const unpacked = new WeakMap();
+  /** Rows back as objects, newest first (the order OpenDota sends). */
+  function unpackHistory(packed) {
+    let rows = unpacked.get(packed);
+    if (!rows) {
+      rows = packed.map((r) => Object.fromEntries(HISTORY_FIELDS.map((f, i) => [f, r[i]])));
+      unpacked.set(packed, rows);
+    }
+    return rows;
+  }
 
   const api = {
     player: (id) => getJson(`/players/${id}`, `player_${id}`, TTL.profile),
-    winLoss: (id, t) => getJson(`/players/${id}/wl?significant=${sig(t)}`, `wl_${id}${turboKey(t)}`, TTL.wl),
-    heroes: (id, t) => getJson(`/players/${id}/heroes?significant=${sig(t)}`, `heroes_${id}${turboKey(t)}`, TTL.heroes),
-    recentMatches: (id, limit, t) => getJson(`/players/${id}/matches?limit=${limit}&significant=${sig(t)}`,
-      `matches_${id}_${limit}${turboKey(t)}`, TTL.matches),
-    heroMatches: (id, heroId, limit, t) =>
-      getJson(`/players/${id}/matches?hero_id=${heroId}&limit=${limit}&significant=${sig(t)}${HERO_MATCH_PROJECT}`,
-        `heromatches_${id}_${heroId}_${limit}${turboKey(t)}`, TTL.matches),
+    // Unfiltered (significant=0): the Turbo toggle is applied by selectGames,
+    // so one download serves both states of the switch.
+    history: (id) => getJson(HISTORY_PATH(id), `history_${id}`, TTL.matches, true, packHistory).then(unpackHistory),
     matchDetail: (matchId) => getJson(`/matches/${matchId}`, `match_${matchId}`, TTL.constants, false),
-    totals: (id, t) => getJson(`/players/${id}/totals?significant=${sig(t)}`, `totals_${id}${turboKey(t)}`, TTL.wl),
-    counts: (id, t) => getJson(`/players/${id}/counts?significant=${sig(t)}`, `counts_${id}${turboKey(t)}`, TTL.wl),
     peers: (id) => getJson(`/players/${id}/peers`, `peers_${id}`, TTL.wl),
   };
+
+  /* ---------------- stats from the match history (history.rs) ---------------- */
+
+  const MIN_SIGNIFICANT_DURATION = 360;
+  // game_mode / lobby_type ids flagged `balanced` in OpenDota's constants.
+  const BALANCED_GAME_MODES = new Set([0, 1, 2, 3, 4, 5, 12, 16, 17, 22]);
+  const BALANCED_LOBBY_TYPES = new Set([0, 1, 2, 5, 6, 7, 9, 10, 11, 13]);
+  const TOTAL_FIELDS = ['kills', 'deaths', 'assists', 'gold_per_min', 'xp_per_min',
+    'last_hits', 'denies', 'hero_damage', 'tower_damage', 'duration'];
+
+  /** OpenDota's significant=1 rule: balanced mode and lobby, known result, not an abandon. */
+  const isSignificant = (m) => BALANCED_GAME_MODES.has(m.game_mode) && BALANCED_LOBBY_TYPES.has(m.lobby_type)
+    && m.radiant_win != null && n0(m.duration) > MIN_SIGNIFICANT_DURATION;
+
+  /** Games counted under the Turbo toggle, newest first. */
+  const selectGames = (rows, turbo) => rows.filter((m) => turbo || isSignificant(m))
+    .sort((a, b) => b.match_id - a.match_id);
+
+  /** A known win; /wl files unknown results under losses, so this is not `!lost`. */
+  const wonGame = (m) => won(m) === true;
+
+  /** Selected games for an account, as a promise. */
+  const gamesFor = async (id, turbo) => selectGames(await api.history(id), turbo);
+
+  /** /wl: unknown results count as losses, as OpenDota does. */
+  function winLossOf(rows) {
+    const win = rows.filter(wonGame).length;
+    return { win, lose: rows.length - win };
+  }
+
+  /** /heroes, games desc. OpenDota's tie order is arbitrary; hero id keeps it stable. */
+  function heroStatsOf(rows) {
+    const byHero = new Map();
+    for (const m of rows) {
+      if (!m.hero_id) continue; // unrecorded rows carry no hero; /heroes skips them
+      const h = byHero.get(m.hero_id) || { hero_id: m.hero_id, games: 0, win: 0, last_played: null };
+      h.games++;
+      if (wonGame(m)) h.win++;
+      if (m.start_time != null && (h.last_played == null || m.start_time > h.last_played)) h.last_played = m.start_time;
+      byHero.set(m.hero_id, h);
+    }
+    return [...byHero.values()].sort((a, b) => b.games - a.games || a.hero_id - b.hero_id);
+  }
+
+  /** /totals: `n` counts only games that recorded the field. */
+  const totalsOf = (rows) => TOTAL_FIELDS.map((field) => {
+    const vals = rows.map((m) => m[field]).filter((v) => v != null);
+    return { field, n: vals.length, sum: vals.reduce((a, b) => a + b, 0) };
+  });
+
+  /** /counts lane_role and game_mode groups; a missing id is filed under "0". */
+  function countsOf(rows) {
+    const c = { lane_role: {}, game_mode: {} };
+    for (const m of rows) {
+      for (const group of ['lane_role', 'game_mode']) {
+        const slot = (c[group][String(m[group] ?? 0)] ??= { games: 0, win: 0 });
+        slot.games++;
+        if (wonGame(m)) slot.win++;
+      }
+    }
+    return c;
+  }
 
   let heroIndexMemo = null;
   /** id -> { name, slug } from the /heroes constants, memoized for the page's life. */
@@ -244,24 +331,21 @@
     },
 
     get_winrate: async ({ includeTurbo, accountId }) => {
-      const wl = await api.winLoss(accountFor(accountId), !!includeTurbo);
-      const win = n0(wl.win), lose = n0(wl.lose);
+      const { win, lose } = winLossOf(await gamesFor(accountFor(accountId), !!includeTurbo));
       return { win, lose, total: win + lose, winrate: pct(win, win + lose) };
     },
 
     get_heroes: async ({ n, includeTurbo, accountId }) => {
       const id = accountFor(accountId);
-      const [heroes, idx] = await Promise.all([api.heroes(id, !!includeTurbo), heroIndex()]);
-      return heroes.slice(0, n ?? 8).map((h) => heroStatOut(idx, h));
+      const [rows, idx] = await Promise.all([gamesFor(id, !!includeTurbo), heroIndex()]);
+      return heroStatsOf(rows).slice(0, n ?? 8).map((h) => heroStatOut(idx, h));
     },
 
     get_recent: async ({ limit, includeTurbo, heroId, accountId }) => {
       const id = accountFor(accountId);
       const count = limit ?? 12;
-      const [matches, idx] = await Promise.all([
-        heroId != null ? api.heroMatches(id, heroId, count, !!includeTurbo) : api.recentMatches(id, count, !!includeTurbo),
-        heroIndex(),
-      ]);
+      const [rows, idx] = await Promise.all([gamesFor(id, !!includeTurbo), heroIndex()]);
+      const matches = (heroId != null ? rows.filter((m) => m.hero_id === heroId) : rows).slice(0, count);
       return matches.map((m) => ({
         match_id: m.match_id, hero: heroName(idx, n0(m.hero_id)), icon: heroSlug(idx, n0(m.hero_id)),
         won: won(m), kills: n0(m.kills), deaths: n0(m.deaths), assists: n0(m.assists),
@@ -272,9 +356,9 @@
 
     get_top_winrate: async ({ n, minGames, includeTurbo, accountId }) => {
       const id = accountFor(accountId);
-      const [heroes, idx] = await Promise.all([api.heroes(id, !!includeTurbo), heroIndex()]);
+      const [rows, idx] = await Promise.all([gamesFor(id, !!includeTurbo), heroIndex()]);
       const min = minGames ?? 5;
-      const ranked = heroes.map((h) => heroStatOut(idx, h))
+      const ranked = heroStatsOf(rows).map((h) => heroStatOut(idx, h))
         .filter((h) => h.games >= min)
         .sort((a, b) => b.winrate - a.winrate || b.games - a.games);
       return { min_games: min, heroes: ranked.slice(0, n ?? 6) };
@@ -291,7 +375,9 @@
     get_hero_detail: async ({ heroId, includeTurbo, accountId }) => {
       const id = accountFor(accountId);
       const turbo = !!includeTurbo;
-      const [idx, heroes, matches] = await Promise.all([heroIndex(), api.heroes(id, turbo), api.heroMatches(id, heroId, 20, turbo)]);
+      const [idx, rows] = await Promise.all([heroIndex(), gamesFor(id, turbo)]);
+      const heroes = heroStatsOf(rows);
+      const matches = rows.filter((m) => m.hero_id === heroId).slice(0, 20);
       const stat = heroes.find((h) => h.hero_id === heroId);
       const n = Math.max(matches.length, 1);
       const sum = (f) => matches.reduce((acc, m) => acc + f(m), 0);
@@ -353,7 +439,7 @@
     },
 
     get_performance: async ({ includeTurbo, accountId }) => {
-      const totals = await api.totals(accountFor(accountId), !!includeTurbo);
+      const totals = totalsOf(await gamesFor(accountFor(accountId), !!includeTurbo));
       const avg = (field) => {
         const t = totals.find((x) => x.field === field);
         return t && n0(t.n) !== 0 ? n0(t.sum) / t.n : 0;
@@ -372,7 +458,7 @@
     },
 
     get_breakdowns: async ({ includeTurbo, accountId }) => {
-      const c = await api.counts(accountFor(accountId), !!includeTurbo);
+      const c = countsOf(await gamesFor(accountFor(accountId), !!includeTurbo));
       const rows = (group, name, keep) => Object.entries(group || {})
         .filter(([k, v]) => keep(k) && n0(v.games) > 0)
         .map(([k, v]) => ({ label: name(k), games: n0(v.games), win: n0(v.win), winrate: pct(n0(v.win), n0(v.games)) }))

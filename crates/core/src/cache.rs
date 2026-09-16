@@ -72,6 +72,15 @@ pub fn get(key: &str, ttl: Duration) -> Result<Option<String>> {
     }
 }
 
+/// Modification time of the entry for `key` if it exists and is younger than
+/// `ttl`. Lets in-memory copies of an entry check they still match the file
+/// without re-reading it.
+pub fn fresh_stamp(key: &str, ttl: Duration) -> Option<SystemTime> {
+    let modified = std::fs::metadata(entry_path(key).ok()?).ok()?.modified().ok()?;
+    let age = SystemTime::now().duration_since(modified).unwrap_or_default();
+    (age <= ttl).then_some(modified)
+}
+
 /// Write raw JSON to the cache under `key`.
 ///
 /// Writes to a sibling temp file and renames, because `rename` is atomic within
