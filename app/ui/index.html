@@ -8,10 +8,11 @@
   <!-- web:head -->
 </head>
 <body>
+  <div id="apiBar" class="apibar" aria-hidden="true"></div>
   <div class="topbar">
     <div class="brand">
       <img src="dota_2_icon.png" alt="" />
-      <div><h1>Dota 2 Stats</h1><div class="sub">via OpenDota · cached locally</div></div>
+      <div><h1>Dota 2 Stats</h1><div class="sub api-status" id="apiStatus" role="status"><i class="api-dot"></i><span id="apiStatusText">via OpenDota · cached locally</span></div></div>
     </div>
     <div class="controls">
       <div id="getApp" class="getapp" hidden>

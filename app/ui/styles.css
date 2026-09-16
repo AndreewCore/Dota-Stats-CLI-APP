@@ -325,3 +325,43 @@ a.btn:hover { border-color: var(--red); background: var(--panel-3); }
   table { font-size: 12.5px; }
   th, td { padding: 7px 6px; }
 }
+
+/* ---- OpenDota loading indicator (app.js trackLoad) ---- */
+/* Page-wide sweep while any request is pending. */
+.apibar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 100;
+          overflow: hidden; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.apibar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 35%;
+                  background: linear-gradient(90deg, transparent, var(--red), var(--gold), transparent);
+                  animation: api-sweep 1.1s ease-in-out infinite; }
+body.fetching .apibar { opacity: 1; }
+.api-status { display: flex; align-items: center; gap: 6px; }
+.api-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: 0 0 auto;
+           transition: background .2s; }
+body.fetching .api-status { color: var(--gold); }
+body.fetching .api-dot { background: var(--gold); animation: api-pulse 1s ease-in-out infinite; }
+
+/* A busy panel keeps its old numbers visible but dimmed, so a reload reads as
+   "updating" rather than as data that silently went stale. */
+.card { position: relative; }
+.card.busy > :not(h2):not(.card-head), .profile.busy > #profileMain {
+  opacity: .45; transition: opacity .2s; pointer-events: none; }
+/* The sweep moves its background, not the box: a translated box would need
+   overflow:hidden on the card, which clips the hero search dropdown. */
+.card.busy::after, .profile.busy::after {
+  content: ""; position: absolute; top: 0; left: 14px; right: 14px; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent) no-repeat;
+  background-size: 40% 100%; animation: api-slide 1.1s ease-in-out infinite; }
+
+.loading { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line);
+           border-top-color: var(--gold); animation: api-spin .8s linear infinite; }
+
+@keyframes api-sweep { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@keyframes api-slide { from { background-position: -70% 0; } to { background-position: 170% 0; } }
+@keyframes api-pulse { 50% { opacity: .3; transform: scale(.7); } }
+@keyframes api-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .apibar::before, .card.busy::after, .profile.busy::after, .api-dot, .spinner { animation: none; }
+  .apibar::before { width: 100%; }
+  .card.busy::after, .profile.busy::after { background-size: 100% 100%; }
+}
