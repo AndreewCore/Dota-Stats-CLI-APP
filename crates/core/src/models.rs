@@ -289,9 +289,12 @@ pub fn lane_role_name(id: &str) -> &'static str {
     }
 }
 
-/// Human label for the common OpenDota game_mode ids.
-pub fn game_mode_name(id: &str) -> &'static str {
-    match id {
+/// Human label for the game_mode ids worth a row of their own.
+///
+/// `None` for everything else — event, arcade and long-retired modes, which
+/// callers bucket together rather than list one by one.
+pub fn game_mode_name(id: &str) -> Option<&'static str> {
+    Some(match id {
         "1" => "All Pick",
         "2" => "Captains Mode",
         "3" => "Random Draft",
@@ -301,8 +304,8 @@ pub fn game_mode_name(id: &str) -> &'static str {
         "18" => "Ability Draft",
         "22" => "Ranked All Pick",
         "23" => "Turbo",
-        _ => "Other",
-    }
+        _ => return None,
+    })
 }
 
 /// Medal name for a rank_tier value (tens digit).

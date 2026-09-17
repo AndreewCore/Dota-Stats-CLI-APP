@@ -6,7 +6,9 @@
 //! Network/cache work runs on a blocking thread so the UI never freezes.
 
 use dota_stats_core::display::{hero_name, kda_ratio, peer_name, player_name, top_peers};
-use dota_stats_core::models::{game_mode_name, lane_role_name, medal_name, medal_stars, MatchSummary};
+use dota_stats_core::models::{
+    game_mode_name, lane_role_name, medal_name, medal_stars, MatchSummary, WinGames,
+};
 use dota_stats_core::{cache, OpenDota, UsersStore};
 use serde_json::{json, Value};
 
@@ -410,14 +412,31 @@ async fn get_breakdowns(include_turbo: Option<bool>, account_id: Option<u64>) ->
             .collect();
         roles.sort_by(|a, b| b["games"].as_u64().cmp(&a["games"].as_u64()));
 
+        // Every unnamed id used to get a row of its own, so an account with a
+        // few Diretide, Custom and 1v1 Mid games grew a run of one-game rows all
+        // labelled "Other". They add up to one bucket instead; named modes keep
+        // their own row however few games they have.
+        let mut other = WinGames::default();
         let mut modes: Vec<Value> = c
             .game_mode
             .iter()
             .filter(|(_, v)| v.games > 0)
-            .map(|(k, v)| {
-                json!({ "label": game_mode_name(k), "games": v.games, "win": v.win, "winrate": v.winrate() })
+            .filter_map(|(k, v)| match game_mode_name(k) {
+                Some(label) => {
+                    Some(json!({ "label": label, "games": v.games, "win": v.win, "winrate": v.winrate() }))
+                }
+                None => {
+                    other.games += v.games;
+                    other.win += v.win;
+                    None
+                }
             })
             .collect();
+        if other.games > 0 {
+            modes.push(json!({
+                "label": "Other", "games": other.games, "win": other.win, "winrate": other.winrate()
+            }));
+        }
         modes.sort_by(|a, b| b["games"].as_u64().cmp(&a["games"].as_u64()));
 
         Ok(json!({ "roles": roles, "modes": modes }))
