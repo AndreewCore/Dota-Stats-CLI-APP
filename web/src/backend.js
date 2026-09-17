@@ -459,15 +459,29 @@
 
     get_breakdowns: async ({ includeTurbo, accountId }) => {
       const c = countsOf(await gamesFor(accountFor(accountId), !!includeTurbo));
-      const rows = (group, name, keep) => Object.entries(group || {})
-        .filter(([k, v]) => keep(k) && n0(v.games) > 0)
-        .map(([k, v]) => ({ label: name(k), games: n0(v.games), win: n0(v.win), winrate: pct(n0(v.win), n0(v.games)) }))
-        .sort((a, b) => b.games - a.games);
-      return {
-        // Lane role "0" is "unknown"; the desktop app drops it too.
-        roles: rows(c.lane_role, (k) => LANE_ROLES[k] || 'Unknown', (k) => k !== '0'),
-        modes: rows(c.game_mode, (k) => GAME_MODES[k] || 'Other', () => true),
-      };
+      const row = (label, v) => ({
+        label, games: n0(v.games), win: n0(v.win), winrate: pct(n0(v.win), n0(v.games)),
+      });
+      const byGames = (a, b) => b.games - a.games;
+      // Lane role "0" is "unknown"; the desktop app drops it too.
+      const roles = Object.entries(c.lane_role || {})
+        .filter(([k, v]) => k !== '0' && n0(v.games) > 0)
+        .map(([k, v]) => row(LANE_ROLES[k] || 'Unknown', v))
+        .sort(byGames);
+      // Modes with no name of their own (event, arcade, long-retired) sum into
+      // one "Other" row rather than one row each. Mirrors get_breakdowns in
+      // app/src/main.rs.
+      const other = { games: 0, win: 0 };
+      const modes = Object.entries(c.game_mode || {})
+        .filter(([, v]) => n0(v.games) > 0)
+        .flatMap(([k, v]) => {
+          if (GAME_MODES[k]) return [row(GAME_MODES[k], v)];
+          other.games += n0(v.games);
+          other.win += n0(v.win);
+          return [];
+        });
+      if (other.games > 0) modes.push(row('Other', other));
+      return { roles, modes: modes.sort(byGames) };
     },
 
     get_peers: async ({ n, accountId }) => {
