@@ -6,7 +6,7 @@
   const RELEASE_ZIP =
     'https://github.com/AndreewCore/Dota-Stats-CLI-APP/releases/latest/download/dota-stats-windows-x86_64.zip';
   // Production domain of the separate, installable PWA project on Vercel.
-  const PWA_URL = 'https://dota-stats-app.vercel.app/';
+  const PWA_URL = 'https://dota-stats-cap-pwa.vercel.app/';
 
   const target = document.documentElement.dataset.target; // 'site' | 'pwa'
   const box = document.getElementById('getApp');

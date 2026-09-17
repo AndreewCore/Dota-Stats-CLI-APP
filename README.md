@@ -208,7 +208,7 @@ python3 -m http.server -d web/site/dist 8000  # preview locally
 to `web/site` and `web/pwa`, and enable *Include files outside the Root
 Directory* (the build copies `app/ui`). Each folder's `vercel.json` sets the
 build command, the output directory and the security headers. If the PWA
-project gets a domain other than `dota-stats-app.vercel.app`, update `PWA_URL`
+project gets a domain other than `dota-stats-cap-pwa.vercel.app`, update `PWA_URL`
 in `web/src/web.js`.
 
 **Rate limits:** without a key, OpenDota allows 60 requests per minute and 3000
