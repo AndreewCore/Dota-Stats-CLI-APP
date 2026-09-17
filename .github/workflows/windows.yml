@@ -1,4 +1,4 @@
-# Builds the portable Windows bundle: both binaries zipped, no installer.
+# Builds the portable Windows bundle: the desktop app zipped, no installer.
 #
 # Only runs on demand or on a release tag — a Windows build is the slowest job
 # in this repo and nothing here is validated per-push on Linux anyway.
@@ -41,15 +41,15 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
-      # Plain zip, not an installer: it carries the CLI as well as the GUI, and
-      # an unsigned MSI trips SmartScreen harder than a bare executable does.
+      # Plain zip, not an installer: an unsigned MSI trips SmartScreen harder
+      # than a bare executable does. The GUI only — the CLI is a developer tool
+      # built from the repo, not something shipped to dashboard users.
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path staging | Out-Null
-          Copy-Item target/release/dota-stats.exe     staging/
-          Copy-Item target/release/dota-stats-cli.exe staging/
-          Copy-Item LICENSE                           staging/
+          Copy-Item target/release/dota-stats.exe staging/
+          Copy-Item LICENSE                       staging/
           Compress-Archive -Path staging/* -DestinationPath "$env:ARCHIVE.zip"
 
       - name: Upload build artifact

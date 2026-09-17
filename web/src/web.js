@@ -64,6 +64,14 @@
       + `<div class="mbody"><p>${steps}</p></div>`);
   }
 
+  // Installing is what this build exists for, so it claims the first view from
+  // the profile editor app.js would otherwise open with no profiles saved.
+  // Closing it lands on the empty dashboard and its own "+ Add a Dota ID"
+  // button, so nothing is lost. An installed app runs standalone and skips it.
+  // Set here rather than pushed on load because app.js reads it during its own
+  // startup: this script is the previous tag, so it always wins the race.
+  if (!standalone()) window.startupView = showInstallHelp;
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch((err) => console.error('service worker:', err));
   }
