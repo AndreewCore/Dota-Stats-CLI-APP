@@ -893,7 +893,8 @@ async function init() {
     populateUserSelect(payload);
     currentSelected = payload.selected;
     if (currentSelected != null) { loadAll(); }
-    else { showEmptyState(); openUsersEditor(); }
+    // The web build may claim the first view: the PWA opens on Install instead.
+    else { showEmptyState(); (window.startupView || openUsersEditor)(); }
   } catch (e) {
     $('profileMain').innerHTML = `<p class="err">profiles: ${esc(e)}</p>`;
   }
