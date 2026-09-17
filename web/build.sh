@@ -32,7 +32,7 @@ head=''
 if [ "$target" = pwa ]; then
   cp "$web/pwa/manifest.webmanifest" "$out/"
   cp -R "$web/pwa/icons" "$out/icons"
-  head='<link rel="manifest" href="manifest.webmanifest" /><meta name="theme-color" content="#0c1014" /><link rel="apple-touch-icon" href="icons/icon-192.png" />'
+  head='<link rel="manifest" href="manifest.webmanifest" /><meta name="theme-color" content="#0c1014" />'
 fi
 
 sed -e "s|<html lang=\"en\">|<html lang=\"en\" data-target=\"$target\">|" \

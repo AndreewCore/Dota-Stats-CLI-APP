@@ -221,6 +221,30 @@ compact arrays so two long careers still fit the browser's storage quota. Never 
 iOS Safari only installs via *Share → Add to Home Screen*, and Firefox on
 desktop cannot install web apps; the button explains both.
 
+## Brand assets
+
+Every icon the project ships is derived from one master, `assets/brand/logo.png`,
+by `assets/brand/generate.sh` (ImageMagick 7). The derived files are checked in;
+nothing regenerates them at build time, so after changing the master run the
+script and commit what it rewrites.
+
+```bash
+sh assets/brand/generate.sh
+```
+
+| Output | Size | Used by |
+|---|---|---|
+| `app/icons/32x32.png`, `128x128.png`, `icon.png`, `icon.ico` | 32, 128, 512, multi | The Tauri bundle (`app/tauri.conf.json`) |
+| `app/ui/logo.png` | 256 | The dashboard header, in all three builds |
+| `app/ui/favicon.ico` | 16/32/48 | Browser tabs, both web builds |
+| `app/ui/apple-touch-icon.png` | 180 | iOS home screen (no alpha, so it is flattened onto `#0c1014`) |
+| `web/pwa/icons/icon-192.png`, `icon-512.png` | 192, 512 | The PWA manifest, `purpose: any` |
+| `web/pwa/icons/icon-maskable-512.png` | 512 | The PWA manifest, `purpose: maskable` — inset 20% so Android's circular crop keeps the whole logo |
+
+The master is flat RGB, so the script flood-fills its white background to
+transparent from the corners; the white *inside* the logo is sealed off by the
+black ring and the red field and survives.
+
 ## Profiles
 
 There is **no account baked into the repo** — it ships empty. On first launch
