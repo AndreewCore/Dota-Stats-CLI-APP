@@ -2,8 +2,18 @@
 
 Personal Dota 2 dashboard built on the [OpenDota API](https://docs.opendota.com):
 MMR/rank estimate, winrate, most-played heroes, KDA, recent matches, and the
-teammates you play with most — as a native desktop app **and** a CLI you can
-wire into your bar/widgets.
+teammates you play with most.
+
+Three surfaces, one core:
+
+| | What it is | How you get it |
+|---|---|---|
+| **Desktop app** | Native window (Tauri) | Portable zip on Windows, `make install` on Linux |
+| **Web / PWA** | The same dashboard in the browser, installable | [dota-stats-cap-pwa.vercel.app](https://dota-stats-cap-pwa.vercel.app/) |
+| **CLI** | A pack of OpenDota commands for bars and scripts | Built from this repo — see [CLI usage](#cli-usage) |
+
+The CLI is **not** shipped as an installable: it is a developer tool you compile
+from the checkout. Nothing in the releases carries it.
 
 ## Architecture
 
@@ -21,7 +31,8 @@ wire into your bar/widgets.
 see [Web version](#web-version).
 
 One cached core feeds both the GUI and the CLI, so widgets refreshing every few
-minutes never hammer OpenDota. Both live in the OS' own per-user directories:
+minutes never hammer OpenDota. Profiles and cache live in the OS' own per-user
+directories, shared by both binaries:
 
 | | Linux | Windows |
 |---|---|---|
@@ -169,12 +180,12 @@ under `/usr` instead of `~/.local`.
 
 There is no installer. Grab
 [`dota-stats-windows-x86_64.zip`](https://github.com/AndreewCore/Dota-Stats-CLI-APP/releases/latest/download/dota-stats-windows-x86_64.zip)
-from the latest release,
-unzip it anywhere you like and run `dota-stats.exe`. The zip holds both
-binaries; `dota-stats-cli.exe` is used from a terminal opened in that folder,
-or from anywhere once you add the folder to your `PATH`.
+from the latest release, unzip it anywhere you like and run `dota-stats.exe`.
+The zip holds the desktop app and the licence, nothing else: the CLI is a
+developer tool and ships only as source — build it with
+[Build → Windows](#windows) if you want it.
 
-The executables are unsigned, so the first launch shows a SmartScreen warning —
+The executable is unsigned, so the first launch shows a SmartScreen warning —
 *More info → Run anyway* clears it for good. Uninstalling is deleting the
 folder; the profiles under `%APPDATA%\dota-stats\` and the cache under
 `%LOCALAPPDATA%\dota-stats\` are left behind and can be removed by hand.
@@ -255,7 +266,7 @@ many profiles as you like and switch between them with the dropdown in the top
 bar. The file lives in your OS config dir and is never committed — the repo only
 ships the empty `users.example.json` template.
 
-From the CLI you can manage the same list:
+From the CLI — once you have built it — you can manage the same list:
 
 ```bash
 dota-stats-cli add 123456 Main    # save a profile (first one becomes active)
@@ -266,8 +277,23 @@ dota-stats-cli remove 123456      # delete a profile
 
 ## CLI usage
 
+`dota-stats-cli` is a thin terminal front end to the same cached core: a pack of
+OpenDota commands, meant for developers, bars and scripts. **It is not
+distributed** — no release asset, no Windows zip entry, no separate download.
+You get it by building this repo:
+
+```bash
+cargo build --release --locked      # target/release/dota-stats-cli
+cargo run -p dota-stats-cli -- winrate   # or run it straight from the checkout
+```
+
+On Linux, `make install-cli` puts it on your `PATH` (that is what the widget
+snippets below assume). On Windows, run it from `target\release\` or add that
+folder to your `PATH` yourself.
+
 ```bash
 dota-stats-cli profile            # name, rank/medal, MMR estimate (if any)
+dota-stats-cli mmr                # estimated MMR only
 dota-stats-cli rank               # rank medal + stars
 dota-stats-cli winrate            # overall W/L and win %
 dota-stats-cli heroes --n 5       # top N most-played heroes
@@ -277,7 +303,9 @@ dota-stats-cli peers --n 10       # top teammates by games played together
 dota-stats-cli widget <metric>    # one-line JSON for bars: mmr|rank|winrate|top-hero
 ```
 
-Add `--json` to most commands for machine-readable output.
+Add `--json` to most commands for machine-readable output, and `--turbo` to
+count Turbo matches — the same toggle the dashboard header carries. Run
+`dota-stats-cli --help` for the full list.
 
 > **Note:** OpenDota has deprecated numeric `mmr_estimate` for most accounts, so
 > `mmr`/`profile` may show `n/a` for the number. The rank **medal** is the
@@ -287,6 +315,8 @@ Add `--json` to most commands for machine-readable output.
 
 All three bar tools are command-driven. The `widget` subcommand emits
 `{"text": "...", "tooltip": "..."}` for waybar; plain commands suit eww/polybar.
+The snippets assume `dota-stats-cli` is on your `PATH` (`make install-cli`);
+otherwise point `exec` at the built binary in `target/release/`.
 
 ### waybar
 
